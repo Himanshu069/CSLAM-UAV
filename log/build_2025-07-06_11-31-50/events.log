@@ -1,0 +1,7 @@
+[0.000000] (-) TimerEvent: {}
+[0.000151] (-) JobUnselected: {'identifier': 'px4_msgs'}
+[0.000221] (-) JobUnselected: {'identifier': 'px4_ros_com'}
+[0.000255] (px4_offboard) JobQueued: {'identifier': 'px4_offboard', 'dependencies': OrderedDict({'px4_msgs': '/home/himanshu/cslam_ws/src/install/px4_msgs'})}
+[0.000323] (px4_offboard) JobStarted: {'identifier': 'px4_offboard'}
+[0.007909] (px4_offboard) JobEnded: {'identifier': 'px4_offboard', 'rc': 1}
+[0.018303] (-) EventReactorShutdown: {}

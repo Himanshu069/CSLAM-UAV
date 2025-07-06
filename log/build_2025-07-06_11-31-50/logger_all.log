@@ -1,0 +1,114 @@
+[0.180s] DEBUG:colcon:Command line arguments: ['/usr/bin/colcon', 'build', '--packages-select', 'px4_offboard']
+[0.180s] DEBUG:colcon:Parsed command line arguments: Namespace(log_base=None, log_level=None, verb_name='build', build_base='build', install_base='install', merge_install=False, symlink_install=False, test_result_base=None, continue_on_error=False, executor='parallel', parallel_workers=8, event_handlers=None, ignore_user_meta=False, metas=['./colcon.meta'], base_paths=['.'], packages_ignore=None, packages_ignore_regex=None, paths=None, packages_up_to=None, packages_up_to_regex=None, packages_above=None, packages_above_and_dependencies=None, packages_above_depth=None, packages_select_by_dep=None, packages_skip_by_dep=None, packages_skip_up_to=None, packages_select_build_failed=False, packages_skip_build_finished=False, packages_select_test_failures=False, packages_skip_test_passed=False, packages_select=['px4_offboard'], packages_skip=None, packages_select_regex=None, packages_skip_regex=None, packages_start=None, packages_end=None, allow_overriding=[], cmake_args=None, cmake_target=None, cmake_target_skip_unavailable=False, cmake_clean_cache=False, cmake_clean_first=False, cmake_force_configure=False, ament_cmake_args=None, catkin_cmake_args=None, catkin_skip_building_tests=False, mixin_files=None, mixin=None, verb_parser=<colcon_mixin.mixin.mixin_argument.MixinArgumentDecorator object at 0x7d3a1fd64f20>, verb_extension=<colcon_core.verb.build.BuildVerb object at 0x7d3a1fe88d40>, main=<bound method BuildVerb.main of <colcon_core.verb.build.BuildVerb object at 0x7d3a1fe88d40>>, mixin_verb=('build',))
+[0.241s] Level 1:colcon.colcon_core.package_discovery:discover_packages(colcon_meta) check parameters
+[0.241s] Level 1:colcon.colcon_core.package_discovery:discover_packages(recursive) check parameters
+[0.241s] Level 1:colcon.colcon_core.package_discovery:discover_packages(ignore) check parameters
+[0.241s] Level 1:colcon.colcon_core.package_discovery:discover_packages(path) check parameters
+[0.241s] Level 1:colcon.colcon_core.package_discovery:discover_packages(colcon_meta) discover
+[0.241s] Level 1:colcon.colcon_core.package_discovery:discover_packages(recursive) discover
+[0.241s] INFO:colcon.colcon_core.package_discovery:Crawling recursively for packages in '/home/himanshu/cslam_ws/src'
+[0.241s] Level 1:colcon.colcon_core.package_identification:_identify(.) by extensions ['ignore', 'ignore_ament_install']
+[0.242s] Level 1:colcon.colcon_core.package_identification:_identify(.) by extension 'ignore'
+[0.242s] Level 1:colcon.colcon_core.package_identification:_identify(.) by extension 'ignore_ament_install'
+[0.242s] Level 1:colcon.colcon_core.package_identification:_identify(.) by extensions ['colcon_pkg']
+[0.242s] Level 1:colcon.colcon_core.package_identification:_identify(.) by extension 'colcon_pkg'
+[0.242s] Level 1:colcon.colcon_core.package_identification:_identify(.) by extensions ['colcon_meta']
+[0.242s] Level 1:colcon.colcon_core.package_identification:_identify(.) by extension 'colcon_meta'
+[0.242s] Level 1:colcon.colcon_core.package_identification:_identify(.) by extensions ['ros']
+[0.242s] Level 1:colcon.colcon_core.package_identification:_identify(.) by extension 'ros'
+[0.287s] Level 1:colcon.colcon_core.package_identification:_identify(.) by extensions ['cmake', 'python']
+[0.287s] Level 1:colcon.colcon_core.package_identification:_identify(.) by extension 'cmake'
+[0.287s] Level 1:colcon.colcon_core.package_identification:_identify(.) by extension 'python'
+[0.288s] Level 1:colcon.colcon_core.package_identification:_identify(.) by extensions ['python_setup_py']
+[0.288s] Level 1:colcon.colcon_core.package_identification:_identify(.) by extension 'python_setup_py'
+[0.288s] Level 1:colcon.colcon_core.package_identification:_identify(build) by extensions ['ignore', 'ignore_ament_install']
+[0.288s] Level 1:colcon.colcon_core.package_identification:_identify(build) by extension 'ignore'
+[0.288s] Level 1:colcon.colcon_core.package_identification:_identify(build) ignored
+[0.288s] Level 1:colcon.colcon_core.package_identification:_identify(install) by extensions ['ignore', 'ignore_ament_install']
+[0.289s] Level 1:colcon.colcon_core.package_identification:_identify(install) by extension 'ignore'
+[0.289s] Level 1:colcon.colcon_core.package_identification:_identify(install) ignored
+[0.289s] Level 1:colcon.colcon_core.package_identification:_identify(log) by extensions ['ignore', 'ignore_ament_install']
+[0.289s] Level 1:colcon.colcon_core.package_identification:_identify(log) by extension 'ignore'
+[0.289s] Level 1:colcon.colcon_core.package_identification:_identify(log) ignored
+[0.289s] Level 1:colcon.colcon_core.package_identification:_identify(px4-offboard) by extensions ['ignore', 'ignore_ament_install']
+[0.290s] Level 1:colcon.colcon_core.package_identification:_identify(px4-offboard) by extension 'ignore'
+[0.290s] Level 1:colcon.colcon_core.package_identification:_identify(px4-offboard) by extension 'ignore_ament_install'
+[0.290s] Level 1:colcon.colcon_core.package_identification:_identify(px4-offboard) by extensions ['colcon_pkg']
+[0.290s] Level 1:colcon.colcon_core.package_identification:_identify(px4-offboard) by extension 'colcon_pkg'
+[0.290s] Level 1:colcon.colcon_core.package_identification:_identify(px4-offboard) by extensions ['colcon_meta']
+[0.290s] Level 1:colcon.colcon_core.package_identification:_identify(px4-offboard) by extension 'colcon_meta'
+[0.290s] Level 1:colcon.colcon_core.package_identification:_identify(px4-offboard) by extensions ['ros']
+[0.290s] Level 1:colcon.colcon_core.package_identification:_identify(px4-offboard) by extension 'ros'
+[0.297s] DEBUG:colcon.colcon_core.package_identification:Package 'px4-offboard' with type 'ros.ament_python' and name 'px4_offboard'
+[0.297s] Level 1:colcon.colcon_core.package_identification:_identify(px4_msgs) by extensions ['ignore', 'ignore_ament_install']
+[0.297s] Level 1:colcon.colcon_core.package_identification:_identify(px4_msgs) by extension 'ignore'
+[0.297s] Level 1:colcon.colcon_core.package_identification:_identify(px4_msgs) by extension 'ignore_ament_install'
+[0.298s] Level 1:colcon.colcon_core.package_identification:_identify(px4_msgs) by extensions ['colcon_pkg']
+[0.298s] Level 1:colcon.colcon_core.package_identification:_identify(px4_msgs) by extension 'colcon_pkg'
+[0.298s] Level 1:colcon.colcon_core.package_identification:_identify(px4_msgs) by extensions ['colcon_meta']
+[0.298s] Level 1:colcon.colcon_core.package_identification:_identify(px4_msgs) by extension 'colcon_meta'
+[0.298s] Level 1:colcon.colcon_core.package_identification:_identify(px4_msgs) by extensions ['ros']
+[0.298s] Level 1:colcon.colcon_core.package_identification:_identify(px4_msgs) by extension 'ros'
+[0.299s] DEBUG:colcon.colcon_core.package_identification:Package 'px4_msgs' with type 'ros.ament_cmake' and name 'px4_msgs'
+[0.299s] Level 1:colcon.colcon_core.package_identification:_identify(px4_ros_com) by extensions ['ignore', 'ignore_ament_install']
+[0.299s] Level 1:colcon.colcon_core.package_identification:_identify(px4_ros_com) by extension 'ignore'
+[0.299s] Level 1:colcon.colcon_core.package_identification:_identify(px4_ros_com) by extension 'ignore_ament_install'
+[0.299s] Level 1:colcon.colcon_core.package_identification:_identify(px4_ros_com) by extensions ['colcon_pkg']
+[0.299s] Level 1:colcon.colcon_core.package_identification:_identify(px4_ros_com) by extension 'colcon_pkg'
+[0.299s] Level 1:colcon.colcon_core.package_identification:_identify(px4_ros_com) by extensions ['colcon_meta']
+[0.299s] Level 1:colcon.colcon_core.package_identification:_identify(px4_ros_com) by extension 'colcon_meta'
+[0.299s] Level 1:colcon.colcon_core.package_identification:_identify(px4_ros_com) by extensions ['ros']
+[0.299s] Level 1:colcon.colcon_core.package_identification:_identify(px4_ros_com) by extension 'ros'
+[0.301s] DEBUG:colcon.colcon_core.package_identification:Package 'px4_ros_com' with type 'ros.ament_cmake' and name 'px4_ros_com'
+[0.301s] Level 1:colcon.colcon_core.package_discovery:discover_packages(recursive) using defaults
+[0.301s] Level 1:colcon.colcon_core.package_discovery:discover_packages(ignore) discover
+[0.301s] Level 1:colcon.colcon_core.package_discovery:discover_packages(ignore) using defaults
+[0.301s] Level 1:colcon.colcon_core.package_discovery:discover_packages(path) discover
+[0.301s] Level 1:colcon.colcon_core.package_discovery:discover_packages(path) using defaults
+[0.336s] INFO:colcon.colcon_core.package_selection:Skipping not selected package 'px4_msgs' in 'px4_msgs'
+[0.336s] INFO:colcon.colcon_core.package_selection:Skipping not selected package 'px4_ros_com' in 'px4_ros_com'
+[0.336s] Level 1:colcon.colcon_core.package_discovery:discover_packages(prefix_path) check parameters
+[0.336s] Level 1:colcon.colcon_core.package_discovery:discover_packages(prefix_path) discover
+[0.338s] Level 1:colcon.colcon_core.package_discovery:discover_packages(prefix_path) using defaults
+[0.339s] Level 5:colcon.colcon_core.verb:set package 'px4_offboard' build argument 'cmake_args' from command line to 'None'
+[0.339s] Level 5:colcon.colcon_core.verb:set package 'px4_offboard' build argument 'cmake_target' from command line to 'None'
+[0.339s] Level 5:colcon.colcon_core.verb:set package 'px4_offboard' build argument 'cmake_target_skip_unavailable' from command line to 'False'
+[0.340s] Level 5:colcon.colcon_core.verb:set package 'px4_offboard' build argument 'cmake_clean_cache' from command line to 'False'
+[0.340s] Level 5:colcon.colcon_core.verb:set package 'px4_offboard' build argument 'cmake_clean_first' from command line to 'False'
+[0.340s] Level 5:colcon.colcon_core.verb:set package 'px4_offboard' build argument 'cmake_force_configure' from command line to 'False'
+[0.340s] Level 5:colcon.colcon_core.verb:set package 'px4_offboard' build argument 'ament_cmake_args' from command line to 'None'
+[0.340s] Level 5:colcon.colcon_core.verb:set package 'px4_offboard' build argument 'catkin_cmake_args' from command line to 'None'
+[0.340s] Level 5:colcon.colcon_core.verb:set package 'px4_offboard' build argument 'catkin_skip_building_tests' from command line to 'False'
+[0.340s] DEBUG:colcon.colcon_core.verb:Building package 'px4_offboard' with the following arguments: {'ament_cmake_args': None, 'build_base': '/home/himanshu/cslam_ws/src/build/px4_offboard', 'catkin_cmake_args': None, 'catkin_skip_building_tests': False, 'cmake_args': None, 'cmake_clean_cache': False, 'cmake_clean_first': False, 'cmake_force_configure': False, 'cmake_target': None, 'cmake_target_skip_unavailable': False, 'install_base': '/home/himanshu/cslam_ws/src/install/px4_offboard', 'merge_install': False, 'path': '/home/himanshu/cslam_ws/src/px4-offboard', 'symlink_install': False, 'test_result_base': None}
+[0.340s] INFO:colcon.colcon_core.executor:Executing jobs using 'parallel' executor
+[0.341s] DEBUG:colcon.colcon_parallel_executor.executor.parallel:run_until_complete
+[0.341s] INFO:colcon.colcon_ros.task.ament_python.build:Building ROS package in '/home/himanshu/cslam_ws/src/px4-offboard' with build type 'ament_python'
+[0.341s] Level 1:colcon.colcon_core.shell:create_environment_hook('px4_offboard', 'ament_prefix_path')
+[0.345s] INFO:colcon.colcon_core.plugin_system:Skipping extension 'colcon_core.shell.bat': Not used on non-Windows systems
+[0.345s] INFO:colcon.colcon_core.shell:Creating environment hook '/home/himanshu/cslam_ws/src/install/px4_offboard/share/px4_offboard/hook/ament_prefix_path.ps1'
+[0.347s] INFO:colcon.colcon_core.shell:Creating environment descriptor '/home/himanshu/cslam_ws/src/install/px4_offboard/share/px4_offboard/hook/ament_prefix_path.dsv'
+[0.348s] INFO:colcon.colcon_core.shell:Creating environment hook '/home/himanshu/cslam_ws/src/install/px4_offboard/share/px4_offboard/hook/ament_prefix_path.sh'
+[0.349s] INFO:colcon.colcon_core.shell:Skip shell extension 'powershell' for command environment: Not usable outside of PowerShell
+[0.349s] DEBUG:colcon.colcon_core.shell:Skip shell extension 'dsv' for command environment
+[0.349s] ERROR:colcon.colcon_ros.task.ament_python.build:Failed to find the following files:
+- /home/himanshu/cslam_ws/src/install/px4_msgs/share/px4_msgs/package.sh
+Check that the following packages have been built:
+- px4_msgs
+[0.360s] DEBUG:colcon.colcon_parallel_executor.executor.parallel:closing loop
+[0.360s] DEBUG:colcon.colcon_parallel_executor.executor.parallel:loop closed
+[0.360s] DEBUG:colcon.colcon_parallel_executor.executor.parallel:run_until_complete finished with '1'
+[0.360s] DEBUG:colcon.colcon_core.event_reactor:joining thread
+[0.366s] INFO:colcon.colcon_core.plugin_system:Skipping extension 'colcon_notification.desktop_notification.terminal_notifier': Not used on non-Darwin systems
+[0.366s] INFO:colcon.colcon_core.plugin_system:Skipping extension 'colcon_notification.desktop_notification.win32': Not used on non-Windows systems
+[0.366s] INFO:colcon.colcon_notification.desktop_notification:Sending desktop notification using 'notify2'
+[0.386s] DEBUG:colcon.colcon_core.event_reactor:joined thread
+[0.386s] INFO:colcon.colcon_core.shell:Creating prefix script '/home/himanshu/cslam_ws/src/install/local_setup.ps1'
+[0.388s] INFO:colcon.colcon_core.shell:Creating prefix util module '/home/himanshu/cslam_ws/src/install/_local_setup_util_ps1.py'
+[0.390s] INFO:colcon.colcon_core.shell:Creating prefix chain script '/home/himanshu/cslam_ws/src/install/setup.ps1'
+[0.391s] INFO:colcon.colcon_core.shell:Creating prefix script '/home/himanshu/cslam_ws/src/install/local_setup.sh'
+[0.392s] INFO:colcon.colcon_core.shell:Creating prefix util module '/home/himanshu/cslam_ws/src/install/_local_setup_util_sh.py'
+[0.393s] INFO:colcon.colcon_core.shell:Creating prefix chain script '/home/himanshu/cslam_ws/src/install/setup.sh'
+[0.394s] INFO:colcon.colcon_core.shell:Creating prefix script '/home/himanshu/cslam_ws/src/install/local_setup.bash'
+[0.395s] INFO:colcon.colcon_core.shell:Creating prefix chain script '/home/himanshu/cslam_ws/src/install/setup.bash'
+[0.396s] INFO:colcon.colcon_core.shell:Creating prefix script '/home/himanshu/cslam_ws/src/install/local_setup.zsh'
+[0.397s] INFO:colcon.colcon_core.shell:Creating prefix chain script '/home/himanshu/cslam_ws/src/install/setup.zsh'
