@@ -1,0 +1,3 @@
+[submodule "px4_ros_com_multi_vehicle"]
+	path = px4_ros_com_multi_vehicle
+	url = git@github.com:Himanshu069/px4_ros_com_multi_vehicle.git
