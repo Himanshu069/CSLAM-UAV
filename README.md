@@ -24,6 +24,8 @@
 After building the packages, run the multi-drone launch script:
 
 ```bash
+mkdir -p cslam/src
+git clone git@github.com:Himanshu069/PX4_ROS_BRIDGE.git  
 cd ~/cslam_ws/src/px4_ros_com_multi_vehicle/scripts/
 ./multi_drone_launch.sh
 ```
