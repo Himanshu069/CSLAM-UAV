@@ -52,6 +52,7 @@ source install/setup.bash
 
 # Launch Simulation
 ```ros2 launch drone_slam_pkg px4_gazebo.launch.py```
+You can view this launch file and make some changes.
 #  Run Teleoperation (in a new terminal)
 ```ros2 run teleop teleop```
 
@@ -59,5 +60,10 @@ source install/setup.bash
 ```
 ros2 run teleop_twist_rpyt_keyboard teleop_twist_rpyt_keyboard
 ```
-
 You need to change the mode of drone to Teleoperation from QGC to operate it using Teleop from terminal
+
+Note: If PX4 doesn't get ready for takeoff , it could be a resource issue, ensure your gpu is being used. You can change the PX4_SIM_SPEED_FACTOR to a lower value like 0.1.
+```
+echo "export PX4_SIM_SPEED_FACTOR=0.1" >> ~/.profile
+source ~/.profile
+```
