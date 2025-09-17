@@ -1,15 +1,15 @@
-[submodule "px4_ros_com"]
-	path = px4_ros_com
-	url = git@github.com:Himanshu069/px4_ros_com.git
-
 [submodule "px4_msgs"]
 	path = px4_msgs
-	url = git@github.com:PX4/px4_msgs.git 
+	url = git@github.com:PX4/px4_msgs.git
+	branch = release/1.16
 
-[submodule "px4-offboard"]
-	path = px4-offboard
-	url = git@github.com:Jaeyoung-Lim/px4-offboard.git
 [submodule "px4_ros_bridge"]
 	path = px4_ros_bridge
 	url = git@github.com:Himanshu069/PX4_ROS_BRIDGE.git
 	branch = main
+
+[submodule "px4-ros2-interface-lib"]
+	path = px4-ros2-interface-lib
+	url = git@github.com:Auterion/px4-ros2-interface-lib.git
+	branch = release/1.16
+
