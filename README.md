@@ -12,31 +12,38 @@ Current Progress(Image):
 - Navigation Policies from map fusion (if feasible)
 
 #  Clone PX4-Autopilot (official repo) and checkout branch v1.16
-```git clone https://github.com/PX4/PX4-Autopilot.git
+```
+git clone https://github.com/PX4/PX4-Autopilot.git
 cd PX4-Autopilot
-git checkout v1.16```
+git checkout v1.16
+
+```
 
 # Modify the OakD-Lite Model (Gazebo)
-```sudo apt install xmlstarlet
+```
+sudo apt install xmlstarlet
 cd Tools/simulation/gz/models/OakD-Lite
 xmlstarlet ed -L \
   -u "/sdf/model/link/sensor[@name='IMX214']/camera/image/width" -v "640" \
   -u "/sdf/model/link/sensor[@name='IMX214']/camera/image/height" -v "480" \
-  model.sdf```
+  model.sdf
+```
 
-# Install ROS2 and Gazebo harmonic as per their official docs
+# Install ROS2 and Gazebo harmonic as per their official docs and install RTAB-MAP
 
 ```sudo apt install ros-$ROS_DISTRO-rtabmap-ros```
 
 # Create ROS 2 Workspace
-```mkdir -p ~/cslam_ws/src
+```
+mkdir -p ~/cslam_ws/src
 cd ~/cslam_ws/src
-git clone <this-repo-url>
+git clone https://github.com/Himanshu069/CSLAM-UAV.git
 ```
 # Build Required Packages
 Note: You need to build the px4_ros2_cpp and px4_msgs and source them before building the teleop packages,
       The teleop package here is only applicable for single drone, it is under work to be changed to make it work for multi drones.
-```cd ~/cslam_ws
+```
+cd ~/cslam_ws
 colcon build --packages-select px4_msgs px4_ros2_cpp
 source install/setup.bash
 colcon build
@@ -44,12 +51,12 @@ source install/setup.bash
 ```
 
 # Launch Simulation
-```ros2 launch drone_slam_pkg px4_gazebo.launch.py
-```
+```ros2 launch drone_slam_pkg px4_gazebo.launch.py```
 #  Run Teleoperation (in a new terminal)
 ```ros2 run teleop teleop```
 
-# ``` Run Keyboard Teleoperation (in another terminal)
+# Run Keyboard Teleoperation (in another terminal)
+```
 ros2 run teleop_twist_rpyt_keyboard teleop_twist_rpyt_keyboard
 ```
 
