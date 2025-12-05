@@ -1,9 +1,8 @@
 <h2> Collaborative SLAM with Multi-UAV System (ROS 2 + PX4) </h2>
----
 This repository contains a full workflow for setting up, simulating, and experimenting with multi‑UAV collaborative SLAM (CSLAM) using ROS 2, PX4, Gazebo, and RTAB‑Map. It is designed to support both autonomous and manual‑teleoperation modes, with each drone running onboard SLAM.
 Current Progess: Working RTAB-MAP simulation on a single drone & single drone manual control with Teleoperation mode
 <img width="1920" height="1054" alt="Screenshot from 2025-09-17 15-49-12" src="https://github.com/user-attachments/assets/14b705d6-ab86-469a-b09b-158b18de4767" />
----
+
 1️⃣ Prerequisites
 System Requirements
 
