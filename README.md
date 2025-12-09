@@ -1,29 +1,62 @@
-# 🛸 Collaborative SLAM in UAVs
+<h2>Collaborative SLAM with Multi-UAV System (ROS 2 + PX4)</h2>
+This repository contains a full workflow for setting up, simulating, and experimenting with multi‑UAV collaborative SLAM (CSLAM) using ROS 2, PX4, Gazebo, and RTAB‑Map. It is designed to support both autonomous and manual‑teleoperation modes, with each drone running onboard SLAM.
 
-## 📦 PX4 Setup
+<img width="1920" height="1054" alt="Screenshot from 2025-09-17 15-49-12" src="https://github.com/user-attachments/assets/af0226be-1f95-4519-95f6-983a92aa9ad9" />
 
-1. **Clone the PX4-Autopilot repository:**
-
-   ```bash
-   git clone https://github.com/PX4/PX4-Autopilot.git
-   cd PX4-Autopilot
-   git checkout release/1.15
-   ```
-
-2. **Set up the Gazebo simulation submodule:**
-
-   ```bash
-   git config -f .gitmodules submodule.Tools/simulation/gz.url https://github.com/Himanshu069/PX4-gazebo-models.git
-   git submodule sync
-   git submodule update --remote Tools/simulation/gz
-   ```
 ---
+1️⃣ Prerequisites
+System Requirements
 
-## 🚀 Launch Multi-UAV SLAM System
+Ubuntu 24.04 LTS
 
-After building the packages, run the multi-drone launch script:
+ROS 2 Humble or Jazzy
+
+PX4 v1.16
+
+Gazebo Harmonic 
+
+Install ROS2 Jazzy and standard dependencies.
+
+---
+2️⃣ PX4 Setup (Firmware + Gazebo Models)
 
 ```bash
-cd ~/cslam_ws/src/px4_ros_com_multi_vehicle/scripts/
-./multi_drone_launch.sh
+git clone https://github.com/PX4/PX4-Autopilot.git
+cd PX4-Autopilot
+git checkout release/1.16
 ```
+---
+3️⃣ Workspace Setup
+
+```bash
+mkdir -p ~/cslam_ws/src
+cd ~/cslam_ws/src
+git clone https://github.com/Himanshu069/CSLAM-UAV.git .
+git submodule update --init --recursive
+cd ~/cslam_ws
+colcon build --packages_select px4_msgs px4_ros2_cpp
+source install/setup.bash
+colcon build
+```
+---
+4️⃣ SLAM Simulation
+```bash
+ros2 launch drone_slam_pkg px4_gazebo.launch.py
+```
+---
+5️⃣ Manual Teleoperation Mode <br>
+In one terminal , run: <br>
+```bash
+ros2 run manual_ros2_px4_multi teleop
+```
+And in another terminal, run: <br>
+```bash
+ros2 run manual_ros2_px4_multi teleop_keyboard
+```
+---
+6️⃣ Project Goals: <br>
+Individual RTAB-Map SLAM implementation on TWO DRONES<br>
+Offline Map fusion (SE(3) based)<br>
+Online Map fusion with two drones<br>
+
+
