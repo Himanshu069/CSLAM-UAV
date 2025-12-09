@@ -1,18 +1,19 @@
 [submodule "px4_msgs"]
 	path = px4_msgs
-	url = git@github.com:PX4/px4_msgs.git
+	url = https://github.com/PX4/px4_msgs.git
 	branch = release/1.16
 
 [submodule "px4_ros_bridge"]
 	path = px4_ros_bridge
-	url = git@github.com:Himanshu069/PX4_ROS_BRIDGE.git
+	url = https://github.com/Himanshu069/PX4_ROS_BRIDGE.git
 	branch = main
 
 [submodule "px4-ros2-interface-lib"]
 	path = px4-ros2-interface-lib
-	url = git@github.com:Auterion/px4-ros2-interface-lib.git
+	url = https://github.com/Auterion/px4-ros2-interface-lib.git
 	branch = release/1.16
 
 [submodule "manual_ros2_px4_multi"]
 	path = manual_ros2_px4_multi
-	url = git@github.com:Himanshu069/ROS2_PX4_INTERFACE_MANUAL_CONTROL.git
+	url = https://github.com/Himanshu069/ROS2_PX4_INTERFACE_MANUAL_CONTROL.git
+	branch = main
