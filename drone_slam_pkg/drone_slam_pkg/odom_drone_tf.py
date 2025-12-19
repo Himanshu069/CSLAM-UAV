@@ -12,24 +12,41 @@ class OdomTfPublisher(Node):
         super().__init__('odom_drone_tf')
         self.tf_broadcaster = tf2_ros.TransformBroadcaster(self)
 
+        self.declare_parameter('px4_ns', '')
+        self.declare_parameter('vehicle_ns', 'x500_drone_0')
+
+        px4_ns = self.get_parameter('px4_ns').get_parameter_value().string_value
+        vehicle_ns = self.get_parameter('vehicle_ns').get_parameter_value().string_value
+
         qos_profile = QoSProfile(
                 reliability=ReliabilityPolicy.BEST_EFFORT,
                 durability=DurabilityPolicy.TRANSIENT_LOCAL,
                 depth=10
         )
 
+        px4_topic = f'/{px4_ns}/fmu/out/vehicle_odometry' if px4_ns else '/fmu/out/vehicle_odometry'
+
         self.subscription = self.create_subscription(
             VehicleOdometry,
-            '/fmu/out/vehicle_odometry',
+            px4_topic,
             self.odom_callback,
             qos_profile
         )
 
+        self.odom_frame = f'{vehicle_ns}/odom'
+        self.base_frame = f'{vehicle_ns}/base_link'
+
+        self.get_logger().info(f"Subscribed to: {px4_topic}")
+        self.get_logger().info(f"Odom frame: {self.odom_frame}")
+        self.get_logger().info(f"Base frame: {self.base_frame}")
+
     def odom_callback(self, msg: VehicleOdometry):
         t = TransformStamped()
+         # t.header.stamp = int(msg.timestamp // 1_000_000)
+         # t.header.stamp.nanosec = int((msg.timestamp % 1_000_000)*1000)
         t.header.stamp = self.get_clock().now().to_msg()
-        t.header.frame_id = 'odom'
-        t.child_frame_id = 'base_link'
+        t.header.frame_id = self.odom_frame
+        t.child_frame_id = self.base_frame
 
         # Position
         t.transform.translation.x = float(msg.position[0])
