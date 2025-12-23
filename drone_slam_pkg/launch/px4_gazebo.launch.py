@@ -41,7 +41,7 @@ def generate_launch_description():
             actions=[
                 ExecuteProcess(
                     cmd=['gnome-terminal', '--', 'bash', '-c', 
-                        'cd ' + px4_dir + ' && PX4_SYS_AUTOSTART=4001 PX4_GZ_MODEL_POSE="0,6" PX4_SIM_MODEL=gz_x500_depth ./build/px4_sitl_default/bin/px4 -i 1; exec bash'],
+                        'cd ' + px4_dir + ' && PX4_SYS_AUTOSTART=4001 PX4_GZ_MODEL_POSE="0,3" PX4_SIM_MODEL=gz_x500_depth ./build/px4_sitl_default/bin/px4 -i 1; exec bash'],
                     output='screen'
                 )
             ]
@@ -84,12 +84,12 @@ def generate_launch_description():
             arguments=[
                 "/world/baylands/model/x500_depth_0/link/camera_link/sensor/IMX214/image@sensor_msgs/msg/Image@gz.msgs.Image",
                 "/world/baylands/model/x500_depth_0/link/camera_link/sensor/IMX214/camera_info@sensor_msgs/msg/CameraInfo@gz.msgs.CameraInfo",
-                "/depth_camera@sensor_msgs/msg/Image@gz.msgs.Image",
+                "/world/baylands/model/x500_depth_0/link/camera_link/sensor/StereoOV7251/depth_image@sensor_msgs/msg/Image@gz.msgs.Image",
                 "/depth_camera/points@sensor_msgs/msg/PointCloud2@gz.msgs.PointCloudPacked",
             ],
             remappings=[
-                ('/depth_camera', '/drone_0/depth_camera'),
-                ('/depth_camera/points', '/drone_0/depth_camera/points'),
+                ('/world/baylands/model/x500_depth_0/link/camera_link/sensor/StereoOV7251/depth_image', '/drone_0/depth_camera'),
+                # ('/depth_camera/points', '/drone_0/depth_camera/points'),
             ],
             output='screen'
             ),
@@ -99,12 +99,12 @@ def generate_launch_description():
             arguments=[
                 "/world/baylands/model/x500_depth_1/link/camera_link/sensor/IMX214/image@sensor_msgs/msg/Image@gz.msgs.Image",
                 "/world/baylands/model/x500_depth_1/link/camera_link/sensor/IMX214/camera_info@sensor_msgs/msg/CameraInfo@gz.msgs.CameraInfo",
-                "/depth_camera@sensor_msgs/msg/Image@gz.msgs.Image",
+                "/world/baylands/model/x500_depth_1/link/camera_link/sensor/StereoOV7251/depth_image@sensor_msgs/msg/Image@gz.msgs.Image",
                 "/depth_camera/points@sensor_msgs/msg/PointCloud2@gz.msgs.PointCloudPacked",
             ],
             remappings=[
-                ('/depth_camera', '/drone_1/depth_camera'),
-                ('/depth_camera/points', '/drone_1/depth_camera/points'),
+                ('/world/baylands/model/x500_depth_1/link/camera_link/sensor/StereoOV7251/depth_image', '/drone_1/depth_camera'),
+                # ('/depth_camera/points', '/drone_1/depth_camera/points'),
             ],
             output='screen'
         ),
@@ -216,6 +216,12 @@ def generate_launch_description():
         Node(
              package='tf2_ros',
              executable='static_transform_publisher',
+             arguments=['0','0','0','0','0','0','world','x500_drone_0/map'],
+             output='screen'
+             ),
+        Node(
+             package='tf2_ros',
+             executable='static_transform_publisher',
              arguments=['0','0','0','0','0','0','x500_drone_0/base_link','x500_drone_0/x500_depth_0'],
              output='screen'
              ),
@@ -243,7 +249,13 @@ def generate_launch_description():
               arguments=['0.01233', '-0.03', '0.01878', '0', '0', '0', 'x500_drone_0/camera_link', 'x500_drone_0/camera_link/StereoOV7251'],
               output='screen'
               ),
-        #-----------------Drone 1-----------------      
+        #-----------------Drone 1-----------------   
+        Node(
+             package='tf2_ros',
+             executable='static_transform_publisher',
+             arguments=['0','3','0','0','0','0','world','x500_drone_1/map'],
+             output='screen'
+             ),   
         Node(
             package='tf2_ros',
             executable='static_transform_publisher',
@@ -355,7 +367,7 @@ def generate_launch_description():
                 package='rtabmap_odom',
                 executable='rgbd_odometry',
                 name = 'x500_drone_1',
-                # namespace = 'x500_drone_1',
+                namespace = 'x500_drone_1',
                 output='screen',
                 parameters=common_parameters + [{
                     'frame_id': 'x500_drone_1/base_link',
@@ -375,7 +387,7 @@ def generate_launch_description():
             package='rtabmap_slam',
             executable='rtabmap',
             name = 'x500_drone_1',
-            # namespace='x500_drone_1',
+            namespace='x500_drone_1',
             output='screen',
             parameters=common_parameters + [{
                 'frame_id': 'x500_drone_1/base_link',
@@ -396,7 +408,7 @@ def generate_launch_description():
             package='rtabmap_viz',
             executable='rtabmap_viz',
             name = 'x500_drone_1',
-            # namespace='x500_drone_1',
+            namespace='x500_drone_1',
             output='screen',
             parameters=common_parameters,
             remappings=[
