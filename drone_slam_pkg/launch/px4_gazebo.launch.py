@@ -5,12 +5,40 @@ from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch_ros.actions import Node
 from launch.actions import TimerAction
 from launch.actions import SetEnvironmentVariable
+from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from ament_index_python.packages import get_package_share_directory
+from nav2_common.launch import RewrittenYaml
 import os
 
 def generate_launch_description():
     px4_dir = os.path.join(os.getenv('HOME'), 'PX4-Autopilot')
     
+    nav2_params_file = os.path.join(
+        get_package_share_directory('drone_slam_pkg'),
+        'config',
+        'nav2_params.yaml'
+    )
+
+    # Define the namespace you want for this robot
+    robot_namespace1 = 'x500_drone_0'
+    robot_namespace2 = 'x500_drone_1'
+    # Rewrite the YAML to replace robot_namespace
+    configured_params0 = RewrittenYaml(
+        source_file=nav2_params_file,
+        root_key='',
+        param_rewrites={'robot_namespace': robot_namespace1},
+        convert_types=True
+    )
+    configured_params1 = RewrittenYaml(
+        source_file=nav2_params_file,
+        root_key='',
+        param_rewrites={'robot_namespace': robot_namespace2},
+        convert_types=True
+    )
+    pkg_nav2_bringup = get_package_share_directory(
+        'nav2_bringup') 
+    nav2_launch = PathJoinSubstitution(
+        [pkg_nav2_bringup, 'launch', 'navigation_launch.py'])
     common_parameters = [{
         'subscribe_depth': True,
         'subscribe_rgbd': False,
@@ -371,6 +399,22 @@ def generate_launch_description():
                     ('imu', '/x500_drone_0/imu/data')
             ]
             ),
+        IncludeLaunchDescription(
+            PythonLaunchDescriptionSource([nav2_launch]),
+            launch_arguments={
+                'use_sim_time': 'true',
+                'params_file': configured_params0
+            }.items()
+            ),
+        Node(
+            package='drone_slam_pkg',
+            executable='offboard_control',
+            name='offboard_0',
+            parameters=[
+            {'use_sim_time': True}
+            ]
+            ),
+
                         #-----------------Drone1---------------
         # SetEnvironmentVariable('ROS_DOMAIN_ID', '11'),
         Node(
@@ -426,5 +470,21 @@ def generate_launch_description():
                     ('odom_px4', '/x500_drone_1/odom'),
                     ('imu', '/x500_drone_1/imu/data')
             ]
-            )
+            ),
+        IncludeLaunchDescription(
+            PythonLaunchDescriptionSource([nav2_launch]),
+            launch_arguments={
+                'use_sim_time': 'true',
+                'params_file': configured_params1
+            }.items()
+            ),
+        Node(
+            package='drone_slam_pkg',
+            executable='offboard_control',
+            name='offboard_1',
+            namespace='/px4_1',
+            parameters=[
+            {'use_sim_time': True}
+            ]
+            ),
         ])
