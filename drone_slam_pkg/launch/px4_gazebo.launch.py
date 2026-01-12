@@ -13,32 +13,7 @@ import os
 def generate_launch_description():
     px4_dir = os.path.join(os.getenv('HOME'), 'PX4-Autopilot')
     
-    nav2_params_file = os.path.join(
-        get_package_share_directory('drone_slam_pkg'),
-        'config',
-        'nav2_params.yaml'
-    )
 
-    # Define the namespace you want for this robot
-    robot_namespace1 = 'x500_drone_0'
-    robot_namespace2 = 'x500_drone_1'
-    # Rewrite the YAML to replace robot_namespace
-    configured_params0 = RewrittenYaml(
-        source_file=nav2_params_file,
-        root_key='',
-        param_rewrites={'robot_namespace': robot_namespace1},
-        convert_types=True
-    )
-    configured_params1 = RewrittenYaml(
-        source_file=nav2_params_file,
-        root_key='',
-        param_rewrites={'robot_namespace': robot_namespace2},
-        convert_types=True
-    )
-    pkg_nav2_bringup = get_package_share_directory(
-        'nav2_bringup') 
-    nav2_launch = PathJoinSubstitution(
-        [pkg_nav2_bringup, 'launch', 'navigation_launch.py'])
     common_parameters = [{
         'subscribe_depth': True,
         'subscribe_rgbd': False,
@@ -354,7 +329,7 @@ def generate_launch_description():
                     'frame_id': 'x500_drone_0/base_link',
                     'odom_frame_id': 'x500_drone_0/odom',
                     'map_frame_id': 'x500_drone_0/map',
-                    'publish_tf': False
+                    'publish_tf': True
                 }],
                 remappings=[
                     ('rgb/image', '/world/baylands/model/x500_depth_0/link/camera_link/sensor/IMX214/image'),
@@ -399,13 +374,7 @@ def generate_launch_description():
                     ('imu', '/x500_drone_0/imu/data')
             ]
             ),
-        IncludeLaunchDescription(
-            PythonLaunchDescriptionSource([nav2_launch]),
-            launch_arguments={
-                'use_sim_time': 'true',
-                'params_file': configured_params0
-            }.items()
-            ),
+
         Node(
             package='drone_slam_pkg',
             executable='offboard_control',
@@ -471,13 +440,7 @@ def generate_launch_description():
                     ('imu', '/x500_drone_1/imu/data')
             ]
             ),
-        IncludeLaunchDescription(
-            PythonLaunchDescriptionSource([nav2_launch]),
-            launch_arguments={
-                'use_sim_time': 'true',
-                'params_file': configured_params1
-            }.items()
-            ),
+
         Node(
             package='drone_slam_pkg',
             executable='offboard_control',
