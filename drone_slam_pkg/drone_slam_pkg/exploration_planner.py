@@ -97,7 +97,7 @@ class AutonomousExplorer(Node):
             reliability=ReliabilityPolicy.RELIABLE,
             durability=DurabilityPolicy.VOLATILE,
             history=HistoryPolicy.KEEP_LAST,
-            depth=1,
+            depth=1, 
         )
         
         qos_px4 = QoSProfile(
@@ -123,6 +123,7 @@ class AutonomousExplorer(Node):
         self.frontier_timer = self.create_timer(1.0 / self.frontier_rate, self.frontier_search_loop)
         self.rrt_timer = self.create_timer(1.0 / self.rrt_replan_rate, self.rrt_replan)
         self.pf_timer = self.create_timer(1.0 / self.pf_rate, self.potential_field_control)
+        self.test_pose_timer = self.create_timer(0.1, self.fake_pose)
         
         self.get_logger().info(" AUTONOMOUS EXPLORER ONLINE!")
         self.get_logger().info("   Frontier Detection: ON")
@@ -146,6 +147,13 @@ class AutonomousExplorer(Node):
         self.get_logger().info(f"Manual Goal Set: ({self.goal_x:.1f}, {self.goal_y:.1f})")
         self.get_logger().info(" Autonomous exploration PAUSED")
         self.rrt_replan()
+
+    def fake_pose(self):
+        # Slowly move in a circle
+        t = self.get_clock().now().nanoseconds * 1e-9
+        self.current_x = 5.0 * math.cos(0.2 * t)
+        self.current_y = 5.0 * math.sin(0.2 * t)
+
     
     # ==================== FRONTIER DETECTION ====================
     

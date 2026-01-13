@@ -28,7 +28,8 @@ setup(
             'console_scripts': [
                         'odom_drone_tf = drone_slam_pkg.odom_drone_tf:main',
                         'offboard_control = drone_slam_pkg.offboard_control:main',
-                        'exploration_planner = drone_slam_pkg.exploration_planner:main'
+                        'exploration_planner = drone_slam_pkg.exploration_planner:main',
+                        'fake_map = drone_slam_pkg.fake_map:main'
             ],
         },
     )
