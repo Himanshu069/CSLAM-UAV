@@ -1,0 +1,123 @@
+<?xml version="1.0"?>
+<robot name="x500_drone">
+
+  <!-- Base link -->
+  <link name="base_link">
+    <visual>
+      <geometry>
+        <box size="0.02 0.02 0.02"/>
+      </geometry>
+      <material name="blue">
+        <color rgba="0 0 1 1"/>
+      </material>
+    </visual>
+    <collision>
+      <geometry>
+        <box size="0.02 0.02 0.02"/>
+      </geometry>
+    </collision>
+    <inertial>
+      <mass value="1.0"/>
+      <inertia ixx="0.01" ixy="0.0" ixz="0.0"
+               iyy="0.01" iyz="0.0"
+               izz="0.01"/>
+    </inertial>
+  </link>
+
+  <!-- Depth Camera Mount Frame -->
+  <link name="x500_depth_0">
+    <visual>
+      <geometry>
+        <box size="0.01 0.01 0.01"/>
+      </geometry>
+      <material name="red">
+        <color rgba="1 0 0 0.5"/>
+      </material>
+    </visual>
+  </link>
+
+  <!-- Camera Link -->
+  <link name="camera_link">
+    <visual>
+      <geometry>
+        <box size="0.005 0.005 0.005"/>
+      </geometry>
+      <material name="green">
+        <color rgba="0 1 0 0.5"/>
+      </material>
+    </visual>
+  </link>
+
+  <!-- Stereo Camera Frame - RENAMED TO MATCH PX4 -->
+  <link name="x500_depth_0/camera_link/StereoOV7251">
+    <visual>
+      <geometry>
+        <box size="0.003 0.003 0.003"/>
+      </geometry>
+      <material name="yellow">
+        <color rgba="1 1 0 0.5"/>
+      </material>
+    </visual>
+  </link>
+
+  <!-- IMX214 Camera Frame - RENAMED TO MATCH PX4 -->
+  <link name="x500_depth_0/camera_link/IMX214">
+    <visual>
+      <geometry>
+        <box size="0.003 0.003 0.003"/>
+      </geometry>
+      <material name="purple">
+        <color rgba="1 0 1 0.5"/>
+      </material>
+    </visual>
+  </link>
+
+  <!-- JOINTS (Transforms between frames) -->
+
+  <!-- Base to Depth Mount -->
+  <joint name="base_to_depth" type="fixed">
+    <parent link="base_link"/>
+    <child link="x500_depth_0"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+  </joint>
+
+  <!-- Depth Mount to Camera Link -->
+  <joint name="depth_to_camera" type="fixed">
+    <parent link="x500_depth_0"/>
+    <child link="camera_link"/>
+    <orign xyz="0.12 0.03 0.242" rpy="0 0 0"/>
+  </joint>
+
+  <!-- Camera Link to Stereo Camera -->
+  <joint name="camera_to_stereo" type="fixed">
+    <parent link="camera_link"/>
+    <child link="x500_depth_0/camera_link/StereoOV7251"/>
+    <origin xyz="0.01233 -0.03 0.01878" rpy="0 0 0"/>
+  </joint>
+
+  <!-- Camera Link to IMX214 Camera -->
+  <joint name="camera_to_imx214" type="fixed">
+    <parent link="camera_link"/>
+    <child link="x500_depth_0/camera_link/IMX214"/>
+    <origin xyz="0.0123 -0.03 0.01878" rpy="0 0 0"/>
+  </joint>
+
+  <link name="x500_depth_0/base_link/imu_sensor">
+    <visual>
+      <geometry>
+        <box size="0.005 0.005 0.005"/>
+      </geometry>
+      <material name="orange">
+        <color rgba="1 0.5 0 0.5"/>
+      </material>
+    </visual>
+  </link>
+
+  <joint name="base_to_imu" type="fixed">
+    <parent link="base_link"/>
+    <child link="x500_depth_0/base_link/imu_sensor"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+  </joint>
+
+
+</robot>

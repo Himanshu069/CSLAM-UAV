@@ -14,8 +14,12 @@ setup(
         ('share/' + package_name, ['package.xml']),
 
         ('share/' + package_name + '/launch', ['launch/px4_gazebo.launch.py']),
+        ('share/' + package_name + '/launch', ['launch/single_drone_launch.py']),
+
         (os.path.join('share', package_name, 'config'),
             glob('config/*.yaml')),
+        (os.path.join('share', package_name, 'urdf'),
+            ['urdf/base_link.urdf']),
     ],
         install_requires=['setuptools'],
         zip_safe=True,
@@ -33,3 +37,4 @@ setup(
             ],
         },
     )
+
