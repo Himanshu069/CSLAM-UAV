@@ -12,7 +12,7 @@ def generate_launch_description():
     def get_vslam_params(drone_ns, db_name):
         return {
             'use_sim_time': True,
-            'frame_id': f'{drone_ns}/base_link',
+            'frame_id': f'{drone_ns}/base_link_stabilized',
             'map_frame_id': f'{drone_ns}/map',
             'odom_frame_id': f'{drone_ns}/odom',
             
@@ -26,7 +26,7 @@ def generate_launch_description():
             'Odom/ResetCountdown': '1',     
             'Vis/MinInliers': '10',         
             'Odom/Strategy': '0',           
-            'wait_for_transform': 0.2,
+            'wait_for_transform': 0.5,
             'Optimizer/GravitySigma': '0.3',
             'wait_imu_to_init': True,
             'publish_tf': True,
@@ -131,13 +131,13 @@ def generate_launch_description():
                         ("/world/default/model/x500_depth_0/link/camera_link/sensor/IMX214/image", "/x500_drone_0/rgb/image"),
                         ("/world/default/model/x500_depth_0/link/camera_link/sensor/IMX214/camera_info", "/x500_drone_0/rgb/camera_info"),
                         ("/world/default/model/x500_depth_0/link/camera_link/sensor/StereoOV7251/depth_image", "/x500_drone_0/depth/image"),
-                        ("/world/default/model/x500_depth_0/link/base_link/sensor/imu_sensor/imu", "/x500_drone_0/imu/data"),
+                        ("/world/default/model/x500_depth_0/link/base_link/sensor/imu_sensor/imu", "/x500_drone_0/imu/data_raw"),
 
                         # Drone 1
                         ("/world/default/model/x500_depth_1/link/camera_link/sensor/IMX214/image", "/x500_drone_1/rgb/image"),
                         ("/world/default/model/x500_depth_1/link/camera_link/sensor/IMX214/camera_info", "/x500_drone_1/rgb/camera_info"),
                         ("/world/default/model/x500_depth_1/link/camera_link/sensor/StereoOV7251/depth_image", "/x500_drone_1/depth/image"),
-                        ("/world/default/model/x500_depth_1/link/base_link/sensor/imu_sensor/imu", "/x500_drone_1/imu/data"),
+                        ("/world/default/model/x500_depth_1/link/base_link/sensor/imu_sensor/imu", "/x500_drone_1/imu/data_raw"),
                     ],
                 ),
 
@@ -168,6 +168,36 @@ def generate_launch_description():
                      arguments=['0.01233', '-0.03', '0.01878', '0', '0', '0', 'x500_drone_1/camera_link', 'x500_drone_1/camera_link/StereoOV7251']),
 
                 #Drone 0
+                Node(
+                    package='imu_filter_madgwick',
+                    executable='imu_filter_madgwick_node',
+                    namespace='x500_drone_0',
+                    output='screen',
+                    parameters=[{
+                        'use_mag': False,
+                        'world_frame': 'enu',
+                        'publish_tf': False,
+                        'use_sim_time': True,
+                    }],
+                    remappings=[
+                        ('imu/data_raw', '/x500_drone_0/imu/data_raw'),
+                        ('imu/data',     '/x500_drone_0/imu/data'),
+                    ]
+                ),
+                Node(
+                    package='rtabmap_util',
+                    executable='imu_to_tf',
+                    namespace='x500_drone_0',
+                    output='screen',
+                    parameters=[{
+                        'use_sim_time': True,
+                        'fixed_frame_id': 'x500_drone_0/base_link_stabilized',
+                        'base_frame_id': 'x500_drone_0/base_link',
+                    }],
+                    remappings=[
+                        ('imu', '/x500_drone_0/imu/data'),
+                    ]
+                ),
                 Node(
                     package="rtabmap_sync",
                     executable="rgbd_sync",
@@ -223,8 +253,65 @@ def generate_launch_description():
                         ("odom", "/x500_drone_0/odom"),
                     ],
                 ),
-
+                Node(
+                    package='rtabmap_util', executable='point_cloud_xyz', output='screen',
+                    namespace= 'x500_drone_0',
+                    parameters=[{'decimation': 2,
+                                'max_depth': 3.0,
+                                'voxel_size': 0.02,
+                                'use_sim_time': True}],
+                    remappings=[('depth/image', '/x500_drone_0/depth/image'),
+                                ('depth/camera_info', '/x500_drone_0/rgb/camera_info'),
+                                ('cloud', '/x500_drone_0/camera/cloud')]
+                ),
+                Node(
+                    package='rtabmap_costmap_plugins', executable='voxel_marker', output='screen',
+                    namespace="/x500_drone_0/local_costmap",
+                    parameters=[{'use_sim_time': True}]
+                ),
+                Node(
+                    package='px4_ros_com',         
+                    executable='ros_odometry_to_vehicle_odometry',  
+                    name='ros_odometry_to_vehicle_odometry',
+                    parameters=[
+                        {"odom_topic": "/x500_drone_0/odom"},
+                        {"vehicle_odometry_topic": "/fmu/in/vehicle_visual_odometry"},
+                        {"map_frame_id": "/x500_drone_0/map"},   
+                        {"repeat_odom": True}      
+                    ],
+                    output='screen'
+                ),
                 #Drone 1
+                Node(
+                    package='imu_filter_madgwick',
+                    executable='imu_filter_madgwick_node',
+                    namespace='x500_drone_1',
+                    output='screen',
+                    parameters=[{
+                        'use_mag': False,
+                        'world_frame': 'enu',
+                        'publish_tf': False,
+                        'use_sim_time': True,
+                    }],
+                    remappings=[
+                        ('imu/data_raw', '/x500_drone_1/imu/data_raw'),
+                        ('imu/data',     '/x500_drone_1/imu/data'),
+                    ]
+                ),
+                Node(
+                    package='rtabmap_util',
+                    executable='imu_to_tf',
+                    namespace='x500_drone_1',
+                    output='screen',
+                    parameters=[{
+                        'use_sim_time': True,
+                        'fixed_frame_id': 'x500_drone_1/base_link_stabilized',
+                        'base_frame_id': 'x500_drone_1/base_link',
+                    }],
+                    remappings=[
+                        ('imu', '/x500_drone_1/imu/data'),
+                    ]
+                ),
                 Node(
                     package="rtabmap_sync",
                     executable="rgbd_sync",
@@ -291,6 +378,35 @@ def generate_launch_description():
                         "rtabmap.rviz"
                     )],
                     parameters=[{"use_sim_time": True}],
+                ),
+                Node(
+                    package='rtabmap_util', executable='point_cloud_xyz', output='screen',
+                    namespace= 'x500_drone_1',
+                    parameters=[{'decimation': 2,
+                                'max_depth': 3.0,
+                                'voxel_size': 0.02,
+                                'use_sim_time': True}],
+                    remappings=[('depth/image', '/x500_drone_1/depth/image'),
+                                ('depth/camera_info', '/x500_drone_1/rgb/camera_info'),
+                                ('cloud', '/x500_drone_1/camera/cloud')]
+                ),
+                Node(
+                    package='rtabmap_costmap_plugins', executable='voxel_marker', output='screen',
+                    namespace="/x500_drone_1/local_costmap",
+                    parameters=[{'use_sim_time': True}]
+                ),
+
+                Node(
+                    package='px4_ros_com',         
+                    executable='ros_odometry_to_vehicle_odometry',  
+                    name='ros_odometry_to_vehicle_odometry',
+                    parameters=[ 
+                        {"odom_topic": "/x500_drone_1/odom"},
+                        {"vehicle_odometry_topic": "px4_1/fmu/in/vehicle_visual_odometry"},
+                        {"map_frame_id": "/x500_drone_1/map"},   
+                        {"repeat_odom": True}      
+                    ],
+                    output='screen'
                 ),
             ],
         ),

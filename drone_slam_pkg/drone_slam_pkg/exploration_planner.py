@@ -27,7 +27,7 @@ class AutonomousExplorer(Node):
         
         # --- FRONTIER DETECTION PARAMETERS ---
         self.declare_parameters("", [
-            ("min_frontier_size", 5),        # Min cells in frontier cluster
+            ("min_frontier_size", 1),        # Min cells in frontier cluster
             ("frontier_search_rate", 1.0),   # Hz
             ("exploration_complete_threshold", 0.95),  # 95% map known
             
@@ -108,22 +108,22 @@ class AutonomousExplorer(Node):
         )
         
         # Subscribers
-        self.create_subscription(OccupancyGrid, "/map", self.map_cb, qos_map)
-        self.create_subscription(VehicleLocalPosition, "/fmu/out/vehicle_local_position", 
+        self.create_subscription(OccupancyGrid, "map", self.map_cb, qos_map)
+        self.create_subscription(VehicleLocalPosition, "fmu/out/vehicle_local_position", 
                                  self.pos_cb, qos_px4)
-        self.create_subscription(PoseStamped, "/goal_pose", self.goal_cb, 10)
+        self.create_subscription(PoseStamped, "goal_pose", self.goal_cb, 10)
         
         # Publishers
-        self.vel_pub = self.create_publisher(Twist, "/cmd_vel", 10)
-        self.path_pub = self.create_publisher(Path, "/global_path", 10)
-        self.frontier_pub = self.create_publisher(MarkerArray, "/frontiers", 10)
-        self.goal_pub = self.create_publisher(PoseStamped, "/current_goal", 10)
+        self.vel_pub = self.create_publisher(Twist, "cmd_vel", 10)
+        self.path_pub = self.create_publisher(Path, "global_path", 10)
+        self.frontier_pub = self.create_publisher(MarkerArray, "frontiers", 10)
+        self.goal_pub = self.create_publisher(PoseStamped, "current_goal", 10)
         
         # Timers
         self.frontier_timer = self.create_timer(1.0 / self.frontier_rate, self.frontier_search_loop)
         self.rrt_timer = self.create_timer(1.0 / self.rrt_replan_rate, self.rrt_replan)
         self.pf_timer = self.create_timer(1.0 / self.pf_rate, self.potential_field_control)
-        self.test_pose_timer = self.create_timer(0.1, self.fake_pose)
+        # self.test_pose_timer = self.create_timer(0.1, self.fake_pose)
         
         self.get_logger().info(" AUTONOMOUS EXPLORER ONLINE!")
         self.get_logger().info("   Frontier Detection: ON")
@@ -138,6 +138,12 @@ class AutonomousExplorer(Node):
         self.map_info = msg.info
         self.map_data = np.array(msg.data, dtype=np.int8).reshape(
             (msg.info.height, msg.info.width))
+
+        unique, counts = np.unique(self.map_data, return_counts=True)
+        self.get_logger().info(
+        f"Map values: {dict(zip(unique.tolist(), counts.tolist()))}"
+        )
+        
     
     def goal_cb(self, msg):
         self.goal_x = msg.pose.position.x
@@ -148,11 +154,11 @@ class AutonomousExplorer(Node):
         self.get_logger().info(" Autonomous exploration PAUSED")
         self.rrt_replan()
 
-    def fake_pose(self):
-        # Slowly move in a circle
-        t = self.get_clock().now().nanoseconds * 1e-9
-        self.current_x = 5.0 * math.cos(0.2 * t)
-        self.current_y = 5.0 * math.sin(0.2 * t)
+    # def fake_pose(self):
+    #     # Slowly move in a circle
+    #     t = self.get_clock().now().nanoseconds * 1e-9
+    #     self.current_x = 5.0 * math.cos(0.2 * t)
+    #     self.current_y = 5.0 * math.sin(0.2 * t)
 
     
     # ==================== FRONTIER DETECTION ====================
@@ -227,10 +233,10 @@ class AutonomousExplorer(Node):
         # Use morphological dilation to find neighbors
         
         # Dilate free cells by 1 pixel
-        dilated_free = binary_dilation(free_cells, structure=np.ones((3,3)))
+        dilated_unknown = binary_dilation(unknown_cells, structure=np.ones((3,3)))
         
         # Frontier = dilated free cells that overlap with unknown
-        frontier_mask = dilated_free & unknown_cells
+        frontier_mask = free_cells & dilated_unknown
         
         # 3. Label connected frontier regions
         labeled, num_features = ndimage.label(frontier_mask)
