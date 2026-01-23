@@ -40,13 +40,13 @@ def generate_launch_description():
 
     return LaunchDescription([
         ExecuteProcess(
-            cmd=['gnome-terminal', '--', 'make', '-C', px4_dir, 'px4_sitl', 'gz_x500_depth_testworld'],
+            cmd=['gnome-terminal', '--', 'make', '-C', px4_dir, 'px4_sitl', 'gz_x500_depth'],
             output='screen',
             shell=True
         ),
         ExecuteProcess(
             cmd=['gnome-terminal', '--', ' ./QGroundControl-x86_64.AppImage'],
-            cwd=os.path.expanduser('~/Downloads'),
+            cwd=os.path.expanduser('~/'),
             output='screen',
             shell=True
         ),
@@ -67,10 +67,10 @@ def generate_launch_description():
                         "/clock@rosgraph_msgs/msg/Clock[gz.msgs.Clock",
 
                         # RGB camera
-                        "/world/testworld/model/x500_depth_0/link/camera_link/sensor/IMX214/image@sensor_msgs/msg/Image[gz.msgs.Image",
+                        "/world/default/model/x500_depth_0/link/camera_link/sensor/IMX214/image@sensor_msgs/msg/Image[gz.msgs.Image",
 
                         # Camera info
-                        "/world/testworld/model/x500_depth_0/link/camera_link/sensor/IMX214/camera_info@sensor_msgs/msg/CameraInfo[gz.msgs.CameraInfo",
+                        "/world/default/model/x500_depth_0/link/camera_link/sensor/IMX214/camera_info@sensor_msgs/msg/CameraInfo[gz.msgs.CameraInfo",
 
                         # Depth camera raw image
                         "/depth_camera@sensor_msgs/msg/Image[gz.msgs.Image",
@@ -79,7 +79,7 @@ def generate_launch_description():
                         "/depth_camera/points@sensor_msgs/msg/PointCloud2[gz.msgs.PointCloudPacked",
 
                         # IMU
-                        "/world/testworld/model/x500_depth_0/link/base_link/sensor/imu_sensor/imu@sensor_msgs/msg/Imu[gz.msgs.IMU",
+                        "/world/default/model/x500_depth_0/link/base_link/sensor/imu_sensor/imu@sensor_msgs/msg/Imu[gz.msgs.IMU",
                     ]
                 ),
                 
@@ -103,21 +103,21 @@ def generate_launch_description():
                 #             'publish_tf': True
                 #         }],
                 #         remappings=[
-                #             ('rgb/image', '/world/testworld/model/x500_depth_0/link/camera_link/sensor/IMX214/image'),
-                #             ('rgb/camera_info', '/world/testworld/model/x500_depth_0/link/camera_link/sensor/IMX214/camera_info'),
+                #             ('rgb/image', '/world/default/model/x500_depth_0/link/camera_link/sensor/IMX214/image'),
+                #             ('rgb/camera_info', '/world/default/model/x500_depth_0/link/camera_link/sensor/IMX214/camera_info'),
                 #             ('depth/image', '/depth_camera'),
-                #             ('imu', '/world/testworld/model/x500_depth_0/link/base_link/sensor/imu_sensor/imu'),
+                #             ('imu', '/world/default/model/x500_depth_0/link/base_link/sensor/imu_sensor/imu'),
                 #         ]
                 #     ),
 
 
-                # Node(
-                #     package='drone_slam_pkg',
-                #     executable='odom_drone_tf',
-                #     name='odom_drone_tf',
-                #     output='screen',
-                #     parameters=[{'use_sim_time': True}]
-                # ),
+                Node(
+                    package='drone_slam_pkg',
+                    executable='odom_drone_tf',
+                    name='odom_drone_tf',
+                    output='screen',
+                    parameters=[{'use_sim_time': True}]
+                ),
                 Node(
                     package='rtabmap_sync',
                     executable='rgbd_sync',
@@ -132,8 +132,8 @@ def generate_launch_description():
                         'sync_queue_size': 100,
                     }],
                     remappings=[
-                        ('rgb/image', '/world/testworld/model/x500_depth_0/link/camera_link/sensor/IMX214/image'),
-                        ('rgb/camera_info', '/world/testworld/model/x500_depth_0/link/camera_link/sensor/IMX214/camera_info'),
+                        ('rgb/image', '/world/default/model/x500_depth_0/link/camera_link/sensor/IMX214/image'),
+                        ('rgb/camera_info', '/world/default/model/x500_depth_0/link/camera_link/sensor/IMX214/camera_info'),
                         ('depth/image', '/depth_camera'),
                     ],
                 ),
@@ -147,7 +147,7 @@ def generate_launch_description():
                     output='screen',
                     parameters=[vslam_params],
                     remappings=[
-                        ('imu', '/world/testworld/model/x500_depth_0/link/base_link/sensor/imu_sensor/imu'),
+                        ('imu', '/world/default/model/x500_depth_0/link/base_link/sensor/imu_sensor/imu'),
                         # rgbd_image is already /rtabmap/rgbd_image from the rgbd_sync node
                     ],
                 ),
@@ -161,7 +161,7 @@ def generate_launch_description():
                     output='screen',
                     parameters=[vslam_params],
                     remappings=[
-                        ('imu', '/world/testworld/model/x500_depth_0/link/base_link/sensor/imu_sensor/imu'),
+                        ('imu', '/world/default/model/x500_depth_0/link/base_link/sensor/imu_sensor/imu'),
                         ('odom', '/rtabmap/odom'),
                     ],
                     arguments=['-d'],   # delete previous ~/.ros/rtabmap.db (same behavior as many examples)
