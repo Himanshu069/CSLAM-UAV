@@ -8,15 +8,15 @@
 	url = https://github.com/Himanshu069/PX4_ROS_BRIDGE.git
 	branch = main
 
-[submodule "px4-ros2-interface-lib"]
-	path = px4-ros2-interface-lib
-	url = https://github.com/Auterion/px4-ros2-interface-lib.git
-	branch = release/1.16
+#[submodule "px4-ros2-interface-lib"]
+#	path = px4-ros2-interface-lib
+#	url = https://github.com/Auterion/px4-ros2-interface-lib.git
+#	branch = release/1.16
 
-[submodule "manual_ros2_px4_multi"]
-	path = manual_ros2_px4_multi
-	url = https://github.com/Himanshu069/ROS2_PX4_INTERFACE_MANUAL_CONTROL.git
-	branch = main
+#[submodule "manual_ros2_px4_multi"]
+#	path = manual_ros2_px4_multi
+#	url = https://github.com/Himanshu069/ROS2_PX4_INTERFACE_MANUAL_CONTROL.git
+#	branch = main
 [submodule "px4_ros_com"]
 	path = px4_ros_com
 	url = git@github.com:Himanshu069/px4_ros_com.git
