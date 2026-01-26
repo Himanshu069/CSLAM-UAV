@@ -12,14 +12,19 @@ def generate_launch_description():
     def get_vslam_params(drone_ns, db_name):
         return {
             'use_sim_time': True,
-            'frame_id': f'{drone_ns}/base_link_stabilized',
+            'frame_id': f'{drone_ns}/base_link',
+            'guess_frame_id':f'{drone_ns}/base_link_stabilized',
             'map_frame_id': f'{drone_ns}/map',
             'odom_frame_id': f'{drone_ns}/odom',
             
             'subscribe_rgbd': True,
             'subscribe_depth': False,
+            'subscribe_odom_info':True,
+            'wait_for_transform': 0.5,
             'subscribe_imu': True,
             'approx_sync': False, # Sync done in rgbd_sync
+            'wait_imu_to_init': True,
+            'publish_tf': True,
             'queue_size': 200,
             'sync_queue_size': 100,
             
@@ -27,9 +32,17 @@ def generate_launch_description():
             'Vis/MinInliers': '10',         
             'Odom/Strategy': '0',           
             'wait_for_transform': 0.5,
-            'Optimizer/GravitySigma': '0.3',
-            'wait_imu_to_init': True,
-            'publish_tf': True,
+            # 'Optimizer/GravitySigma': '0.3',
+
+            'Optimizer/GravitySigma': '0.1',
+            'Vis/FeatureType': '10',
+            'Kp/DetectorStrategy': '10',
+            'Grid/MapFrameProjection': 'true',
+            'NormalsSegmentation': 'false',
+            'Grid/MaxGroundHeight': '1.15' ,
+            'Grid/MaxObstacleHeight': '1.75',
+            'RGBD/StartAtOrigin': 'true',
+
 
             # 'Grid/3D': True,
             # 'Grid/RayTracing': True,
@@ -49,7 +62,7 @@ def generate_launch_description():
         ),
 
         ExecuteProcess(
-            cmd=["gnome-terminal", "--", "./QGroundControl-x86_64.AppImage"],
+            cmd=["gnome-terminal", "--", "./QGroundControl-x86_64.sAppImage"],
             cwd=os.path.expanduser("~"),
             output="screen",
             shell=True
@@ -68,7 +81,7 @@ def generate_launch_description():
                         "gnome-terminal", "--", "bash", "-c",
                         "cd " + px4_dir +
                         " && PX4_SYS_AUTOSTART=4001 "
-                        'PX4_GZ_MODEL_POSE="0,-8,0" '
+                        'PX4_GZ_MODEL_POSE="2,0,0" '
                         'PX4_GZ_MODEL_ORIENTATION="0,0,1.5708" '
                         "PX4_SIM_MODEL=gz_x500_depth "
                         "./build/px4_sitl_default/bin/px4 -i 1; exec bash"
@@ -92,18 +105,18 @@ def generate_launch_description():
                 #     ],
                 # ),
 
-                Node(
-                    package="tf2_ros",
-                    executable="static_transform_publisher",
-                    arguments=["0", "0", "0", "0", "0", "0", "world", "x500_drone_0/map"],
-                    output="screen",
-                ),
-                Node(
-                    package="tf2_ros",
-                    executable="static_transform_publisher",
-                    arguments=["0", "-8", "0", "0", "0", "1.5708", "world", "x500_drone_1/map"],
-                    output="screen",
-                ),
+                # Node(
+                #     package="tf2_ros",
+                #     executable="static_transform_publisher",
+                #     arguments=["0", "0", "0", "0", "0", "0", "world", "x500_drone_0/map"],
+                #     output="screen",
+                # ),
+                # Node(
+                #     package="tf2_ros",
+                #     executable="static_transform_publisher",
+                #     arguments=["0", "-8", "0", "0", "0", "1.5708", "world", "x500_drone_1/map"],
+                #     output="screen",
+                # ),
 
                 Node(
                     package="ros_gz_bridge",
@@ -155,7 +168,7 @@ def generate_launch_description():
                      arguments=['0.01233', '-0.03', '0.01878', '0', '0', '0', 'x500_drone_0/camera_link', 'x500_drone_0/camera_link/StereoOV7251']),
 
                 
-                #Drone 1
+                # Drone 1
                 Node(package='tf2_ros', executable='static_transform_publisher',
                      arguments=['0', '0', '0', '0', '0', '0', 'x500_drone_1/base_link', 'x500_depth_1/base_link/imu_sensor']),
                 
@@ -264,15 +277,15 @@ def generate_launch_description():
                                 ('depth/camera_info', '/x500_drone_0/rgb/camera_info'),
                                 ('cloud', '/x500_drone_0/camera/cloud')]
                 ),
-                Node(
-                    package='rtabmap_costmap_plugins', executable='voxel_marker', output='screen',
-                    namespace="/x500_drone_0/local_costmap",
-                    parameters=[{'use_sim_time': True}]
-                ),
+                # Node(
+                #     package='rtabmap_costmap_plugins', executable='voxel_marker', output='screen',
+                #     namespace="/x500_drone_0",
+                #     parameters=[{'use_sim_time': True}]
+                # ),
                 Node(
                     package='px4_ros_com',         
                     executable='ros_odometry_to_vehicle_odometry',  
-                    name='ros_odometry_to_vehicle_odometry',
+                    name='ros_odometry_to_vehicle_odometry_0',
                     parameters=[
                         {"odom_topic": "/x500_drone_0/odom"},
                         {"vehicle_odometry_topic": "/fmu/in/vehicle_visual_odometry"},
@@ -390,16 +403,16 @@ def generate_launch_description():
                                 ('depth/camera_info', '/x500_drone_1/rgb/camera_info'),
                                 ('cloud', '/x500_drone_1/camera/cloud')]
                 ),
-                Node(
-                    package='rtabmap_costmap_plugins', executable='voxel_marker', output='screen',
-                    namespace="/x500_drone_1/local_costmap",
-                    parameters=[{'use_sim_time': True}]
-                ),
+                # Node(
+                #     package='rtabmap_costmap_plugins', executable='voxel_marker', output='screen',
+                #     namespace="/x500_drone_1",
+                #     parameters=[{'use_sim_time': True}]
+                # ),
 
                 Node(
                     package='px4_ros_com',         
                     executable='ros_odometry_to_vehicle_odometry',  
-                    name='ros_odometry_to_vehicle_odometry',
+                    name='ros_odometry_to_vehicle_odometry_1',
                     parameters=[ 
                         {"odom_topic": "/x500_drone_1/odom"},
                         {"vehicle_odometry_topic": "px4_1/fmu/in/vehicle_visual_odometry"},

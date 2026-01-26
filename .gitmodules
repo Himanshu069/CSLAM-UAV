@@ -20,3 +20,6 @@
 [submodule "px4_ros_com"]
 	path = px4_ros_com
 	url = git@github.com:Himanshu069/px4_ros_com.git
+[submodule "ROS2_PX4_Offboard_Example"]
+	path = ROS2_PX4_Offboard_Example
+	url = git@github.com:joshibasu62/ROS2_PX4_Offboard_Example.git
