@@ -51,6 +51,11 @@ class AutonomousExplorer(Node):
             ("frontier_weight_distance", 0.5), # Prefer closer frontiers
         ])
         
+        #Altitude
+        self.takeoff_altitude = 1.3  # meters
+        self.altitude_ready = False
+        self.current_z = 0.0
+
         # Frontier params
         self.min_frontier_size = self.get_parameter("min_frontier_size").value
         self.frontier_rate = self.get_parameter("frontier_search_rate").value
@@ -133,6 +138,19 @@ class AutonomousExplorer(Node):
     def pos_cb(self, msg):
         self.current_x = msg.y
         self.current_y = msg.x
+        self.current_z = msg.z
+        
+        if not self.altitude_ready:
+            self.get_logger().info_throttle(2000,
+                f"Waiting for takeoff... current altitude: {(-self.current_z):.2f} m"
+            )
+            if (-self.current_z) >= self.takeoff_altitude:
+                self.altitude_ready = True
+                self.get_logger().info(
+                    f"Takeoff altitude reached: {(-self.current_z):.2f} m"
+            )
+            else:
+                return  # still no
     
     def map_cb(self, msg):
         self.map_info = msg.info
@@ -167,6 +185,8 @@ class AutonomousExplorer(Node):
         if self.map_data is None:
             return
         
+        if not self.altitude_ready:
+            return
         # Check exploration progress
         total_cells = self.map_data.size
         unknown_cells = np.sum(self.map_data == -1)
@@ -320,6 +340,8 @@ class AutonomousExplorer(Node):
         if self.map_data is None or self.goal_x is None:
             return
         
+        if not self.altitude_ready:
+            return
         # Check if reached goal
         dist = math.hypot(self.goal_x - self.current_x, self.goal_y - self.current_y)
         if dist < 0.5:
@@ -477,6 +499,9 @@ class AutonomousExplorer(Node):
         if not self.waypoints or self.map_data is None:
             return
         
+        if not self.altitude_ready:
+            self.publish_zero_velocity()
+            return
         if self.current_waypoint_idx >= len(self.waypoints):
             self.publish_zero_velocity()
             return
