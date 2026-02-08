@@ -298,18 +298,28 @@ def generate_launch_description():
                     remappings = [
                         ("map","/x500_drone_0/map"),
                         ("fmu/out/vehicle_local_position","/fmu/out/vehicle_local_position"),
+                        ("cmd_vel", "/x500_drone_0/cmd_vel"),
                     ]
                 ),
                 Node(
                     package='px4_ros_com',
-                    executable='offboard_exploration',
+                    executable='offboard_cmd_vel',
                     name='drone_0_control',
                     namespace='x500_drone_0',
                     output='screen',
+                    parameters = [{
+                        'use_sim_time': True,
+                    }],
                     remappings=[
                         ("/cmd_vel","/x500_drone_0/cmd_vel"), 
                     ]
                 ),
+                # Node(
+                #     package='drone_control_pkg',
+                #     executable='velocity_control',
+                #     name='teleop',
+                #     output='screen',
+                # ),
                 #Drone 1
                 Node(
                     package='imu_filter_madgwick',
@@ -434,17 +444,17 @@ def generate_launch_description():
                     ],
                     output='screen'
                 ),
-                Node(
-                    package='drone_slam_pkg',
-                    executable='exploration_planner',
-                    name='exploration_planner_1',
-                    output='screen',
-                    remappings = [
-                        ("map","/x500_drone_1/map"),
-                        ("fmu/out/vehicle_local_position","px4_1/fmu/out/vehicle_local_position"),
-                    ]
+                # Node(
+                #     package='drone_slam_pkg',
+                #     executable='exploration_planner',
+                #     name='exploration_planner_1',
+                #     output='screen',
+                #     remappings = [
+                #         ("map","/x500_drone_1/map"),
+                #         ("fmu/out/vehicle_local_position","px4_1/fmu/out/vehicle_local_position"),
+                #     ]
 
-                ),
+                # ),
             ],
         ),
     ])

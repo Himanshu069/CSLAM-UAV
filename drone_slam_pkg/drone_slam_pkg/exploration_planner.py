@@ -144,7 +144,7 @@ class AutonomousExplorer(Node):
             self.get_logger().info_throttle(2000,
                 f"Waiting for takeoff... current altitude: {(-self.current_z):.2f} m"
             )
-            if (-self.current_z) >= self.takeoff_altitude:
+            if (-self.current_z) >= (self.takeoff_altitude-0.1):
                 self.altitude_ready = True
                 self.get_logger().info(
                     f"Takeoff altitude reached: {(-self.current_z):.2f} m"
@@ -662,6 +662,7 @@ class AutonomousExplorer(Node):
         msg = Twist()
         msg.linear.x = vx
         msg.linear.y = vy
+        msg.angular.z = 0.0
         self.vel_pub.publish(msg)
     
     def publish_zero_velocity(self):
