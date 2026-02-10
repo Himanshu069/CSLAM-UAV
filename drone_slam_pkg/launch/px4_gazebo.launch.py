@@ -36,8 +36,8 @@ def generate_launch_description():
             # 'Optimizer/GravitySigma': '0.3',
 
             'Optimizer/GravitySigma': '0.1',
-            'Vis/FeatureType': '10',
-            'Kp/DetectorStrategy': '10',
+            'Vis/FeatureType': '6',
+            'Kp/DetectorStrategy': '6',
             'Grid/MapFrameProjection': 'true',
             'NormalsSegmentation': 'false',
             # 'Grid/MinGroundHeight': '-0.2',
@@ -245,26 +245,26 @@ def generate_launch_description():
                     ],
                     arguments=["-d"], 
                 ),
-                Node(
-                    package="rtabmap_viz",
-                    executable="rtabmap_viz",
-                    name="rtabmap_viz_0",
-                    namespace="x500_drone_0",
-                    output="screen",
-                    parameters=[get_vslam_params("x500_drone_0", "rtabmap_drone_0")],
-                    remappings=[
-                        ("imu", "/x500_drone_0/imu/data"),
-                        ("odom", "/x500_drone_0/odom"),
-                        ("map", "/x500_drone_0/map"),
-                    ],
-                ),
+                # Node(
+                #     package="rtabmap_viz",
+                #     executable="rtabmap_viz",
+                #     name="rtabmap_viz_0",
+                #     namespace="x500_drone_0",
+                #     output="screen",
+                #     parameters=[get_vslam_params("x500_drone_0", "rtabmap_drone_0")],
+                #     remappings=[
+                #         ("imu", "/x500_drone_0/imu/data"),
+                #         ("odom", "/x500_drone_0/odom"),
+                #         ("map", "/x500_drone_0/map"),
+                #     ],
+                # ),
                 Node(
                     package='rtabmap_util', executable='point_cloud_xyz', output='screen',
                     name='pointcloud_xyz_0',
                     namespace= 'x500_drone_0',
-                    parameters=[{'decimation': 2,
+                    parameters=[{'decimation': 4,
                                 'max_depth': 3.0,
-                                'voxel_size': 0.02,
+                                'voxel_size': 0.10,
                                 'use_sim_time': True}],
                     remappings=[('depth/image', '/x500_drone_0/depth/image'),
                                 ('depth/camera_info', '/x500_drone_0/rgb/camera_info'),
@@ -295,6 +295,7 @@ def generate_launch_description():
                     name='exploration_planner_0',
                     namespace='x500_drone_0',
                     output='screen',
+                    prefix='xterm -hold -e',
                     remappings = [
                         ("map","/x500_drone_0/map"),
                         ("fmu/out/vehicle_local_position","/fmu/out/vehicle_local_position"),
@@ -306,10 +307,28 @@ def generate_launch_description():
                     name='drone_0_control',
                     namespace='x500_drone_0',
                     output='screen',
+                    prefix='xterm -hold -e',
+                    parameters =[
+                        {"use_sim_time": True}
+                    ],
                     remappings=[
                         ("/cmd_vel","/x500_drone_0/cmd_vel"), 
                     ]
                 ),
+                # Node(
+                #     package='drone_slam_pkg',
+                #     executable='offboard_control',
+                #     name='drone_0_control',
+                #     namespace='x500_drone_0',
+                #     output='screen',
+                #     prefix='xterm -hold -e',
+                #     parameters =[
+                #         {"use_sim_time": True}
+                #     ],
+                #     remappings=[
+                #         ("/cmd_vel","/x500_drone_0/cmd_vel"), 
+                #     ]
+                # ),
                 #Drone 1
                 Node(
                     package='imu_filter_madgwick',
@@ -389,27 +408,27 @@ def generate_launch_description():
                     ],
                     arguments=["-d"], 
                 ),
-                Node(
-                    package="rtabmap_viz",
-                    executable="rtabmap_viz",
-                    name="rtabmap_viz_1",
-                    namespace="x500_drone_1",
-                    output="screen",
-                    parameters=[get_vslam_params("x500_drone_1", "rtabmap_drone_1")],
-                    remappings=[
-                        ("imu", "/x500_drone_1/imu/data"),
-                        ("odom", "/x500_drone_1/odom"),
-                        ("map", "/x500_drone_1/map")
-                    ],
-                ),
+                # Node(
+                #     package="rtabmap_viz",
+                #     executable="rtabmap_viz",
+                #     name="rtabmap_viz_1",
+                #     namespace="x500_drone_1",
+                #     output="screen",
+                #     parameters=[get_vslam_params("x500_drone_1", "rtabmap_drone_1")],
+                #     remappings=[
+                #         ("imu", "/x500_drone_1/imu/data"),
+                #         ("odom", "/x500_drone_1/odom"),
+                #         ("map", "/x500_drone_1/map")
+                #     ],
+                # ),
 
                 Node(
                     package='rtabmap_util', executable='point_cloud_xyz', output='screen',
                     name='pointcloud_xyz_1',
                     namespace= 'x500_drone_1',
-                    parameters=[{'decimation': 2,
+                    parameters=[{'decimation': 4,
                                 'max_depth': 3.0,
-                                'voxel_size': 0.02,
+                                'voxel_size': 0.10,
                                 'use_sim_time': True}],
                     remappings=[('depth/image', '/x500_drone_1/depth/image'),
                                 ('depth/camera_info', '/x500_drone_1/rgb/camera_info'),

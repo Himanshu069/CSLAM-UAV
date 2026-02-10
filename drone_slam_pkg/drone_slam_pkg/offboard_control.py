@@ -28,8 +28,6 @@ class OffboardControl(Node):
     def __init__(self):
         super().__init__("offboard_control")
 
-        self.use_sim_time_ = False
-        self.declare_parameter("use_sim_time", False)
         self.use_sim_time_ = self.get_parameter("use_sim_time").value
 
         qos_best_effort = QoSProfile(

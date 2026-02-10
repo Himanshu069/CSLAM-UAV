@@ -11,7 +11,7 @@ from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy, DurabilityPolicy
 from nav_msgs.msg import OccupancyGrid, Path
 from geometry_msgs.msg import PoseStamped, Twist
-from px4_msgs.msg import VehicleLocalPosition
+from px4_msgs.msg import VehicleLocalPosition, VehicleAttitude
 from visualization_msgs.msg import Marker, MarkerArray
 from std_msgs.msg import ColorRGBA
 from scipy.ndimage import binary_dilation
@@ -40,12 +40,19 @@ class AutonomousExplorer(Node):
             
             # --- POTENTIAL FIELD PARAMETERS ---
             ("k_att", 2.0),
+            ("k_yaw", 1.5),
             ("k_rep", 40.0),
-            ("influence_radius", 2.5),
+            ("influence_radius", 1.5),
             ("pf_update_rate", 10.0),        # Hz
-            ("max_speed", 2.5),
-            ("waypoint_threshold", 1.0),
-            
+            ("max_speed", 1.0),
+            ("waypoint_threshold", 0.5),
+
+            ("heading_tolerance", 30.0),     # degrees - move forward if within this
+            ("stuck_time_threshold", 4.0),   # seconds - time to detect astuck
+            ("stuck_distance_threshold", 0.15),  # meters - min movement expected
+            ("alignment_yaw_gain", 1.0),     # yaw control gain during alignment
+            ("forward_yaw_gain", 0.5),       # yaw control gain during forward motion
+                        
             # --- EXPLORATION STRATEGY ---
             ("frontier_weight_size", 1.0),   # Prefer larger frontiers
             ("frontier_weight_distance", 0.5), # Prefer closer frontiers
@@ -77,6 +84,11 @@ class AutonomousExplorer(Node):
         self.wp_threshold = self.get_parameter("waypoint_threshold").value
         
         # Exploration strategy
+        self.heading_tolerance = math.radians(self.get_parameter("heading_tolerance").value)
+        self.stuck_time_threshold = self.get_parameter("stuck_time_threshold").value
+        self.stuck_distance_threshold = self.get_parameter("stuck_distance_threshold").value
+        self.alignment_yaw_gain = self.get_parameter("alignment_yaw_gain").value
+        self.forward_yaw_gain = self.get_parameter("forward_yaw_gain").value
         self.w_size = self.get_parameter("frontier_weight_size").value
         self.w_dist = self.get_parameter("frontier_weight_distance").value
         
@@ -85,10 +97,16 @@ class AutonomousExplorer(Node):
         self.map_info = None
         self.current_x = 0.0
         self.current_y = 0.0
+        self.current_yaw = 0.0
         self.goal_x = None
         self.goal_y = None
         self.autonomous_mode = True  # Auto-exploration enabled
-        
+        self.motion_state = "FORWARD"  # "FORWARD" or "ALIGNING"
+        self.last_position = (0.0, 0.0)
+        self.last_stuck_check_time = None
+        self.alignment_start_time = None
+        self.max_alignment_time = 3.0  # seconds
+
         # Path following
         self.waypoints = []
         self.current_waypoint_idx = 0
@@ -116,6 +134,8 @@ class AutonomousExplorer(Node):
         self.create_subscription(OccupancyGrid, "map", self.map_cb, qos_map)
         self.create_subscription(VehicleLocalPosition, "fmu/out/vehicle_local_position", 
                                  self.pos_cb, qos_px4)
+        self.create_subscription(VehicleAttitude, "fmu/out/vehicle_attitude", 
+                                self.attitude_cb, qos_px4)
         self.create_subscription(PoseStamped, "goal_pose", self.goal_cb, 10)
         
         # Publishers
@@ -141,8 +161,9 @@ class AutonomousExplorer(Node):
         self.current_z = msg.z
         
         if not self.altitude_ready:
-            self.get_logger().info_throttle(2000,
-                f"Waiting for takeoff... current altitude: {(-self.current_z):.2f} m"
+            self.get_logger().info(
+                "Waiting for takeoff... current altitude: %.2f m" % -self.current_z,
+                throttle_duration_sec=2.0
             )
             if (-self.current_z) >= self.takeoff_altitude:
                 self.altitude_ready = True
@@ -152,6 +173,13 @@ class AutonomousExplorer(Node):
             else:
                 return  # still no
     
+    def attitude_cb(self, msg):
+    # PX4 Quaternions are typically [w, x, y, z]
+        q = msg.q
+        siny_cosp = 2 * (q[0] * q[3] + q[1] * q[2])
+        cosy_cosp = 1 - 2 * (q[2] * q[2] + q[3] * q[3])
+        self.current_yaw = math.atan2(siny_cosp, cosy_cosp)
+        
     def map_cb(self, msg):
         self.map_info = msg.info
         self.map_data = np.array(msg.data, dtype=np.int8).reshape(
@@ -167,11 +195,18 @@ class AutonomousExplorer(Node):
         self.goal_x = msg.pose.position.x
         self.goal_y = msg.pose.position.y
         self.current_waypoint_idx = 0
-        self.autonomous_mode = False  # Disable auto-exploration
+        self.autonomous_mode = False # Disable auto-exploration
+        self.motion_state = "FORWARD"
         self.get_logger().info(f"Manual Goal Set: ({self.goal_x:.1f}, {self.goal_y:.1f})")
         self.get_logger().info(" Autonomous exploration PAUSED")
         self.rrt_replan()
 
+    def normalize_angle(self, angle):
+        while angle > math.pi:
+            angle -= 2.0 * math.pi
+        while angle < -math.pi: 
+            angle += 2.0 * math.pi
+        return angle
     # def fake_pose(self):
     #     # Slowly move in a circle
     #     t = self.get_clock().now().nanoseconds * 1e-9
@@ -224,6 +259,7 @@ class AutonomousExplorer(Node):
             self.goal_x, self.goal_y = best_frontier
             self.autonomous_mode = True
             self.current_waypoint_idx = 0
+            self.motion_state = "FORWARD" 
             self.get_logger().info(f"New Exploration Goal: ({self.goal_x:.1f}, {self.goal_y:.1f})")
             
             # Publish goal marker
@@ -512,6 +548,7 @@ class AutonomousExplorer(Node):
         dist = math.hypot(target_x - self.current_x, target_y - self.current_y)
         if dist < self.wp_threshold:
             self.current_waypoint_idx += 1
+            self.motion_state = "FORWARD" 
             if self.current_waypoint_idx >= len(self.waypoints):
                 self.get_logger().info(" Reached final waypoint")
                 self.publish_zero_velocity()
@@ -525,15 +562,94 @@ class AutonomousExplorer(Node):
         # Combine
         fx = f_att[0] + f_rep[0]
         fy = f_att[1] + f_rep[1]
+
+        desired_yaw = math.atan2(fy, fx)
+        yaw_error = self.normalize_angle(desired_yaw - self.current_yaw)
+
+        is_stuck = self.check_if_stuck()
+
+        if self.motion_state == "FORWARD":
+            # Try to move forward while gently correcting heading
+            if is_stuck and abs(yaw_error) > math.radians(30):
+                self.motion_state = "ALIGNING"
+                self.alignment_start_time = self.get_clock().now()
+                self.get_logger().info(f"🔄 Stuck detected - switching to ALIGNMENT mode (error: {math.degrees(yaw_error):.1f}°)")
+                vx, vy, yaw_rate = 0.0, 0.0, self.alignment_yaw_gain * yaw_error
+            
+            # Normal forward motion with gentle heading correction
+            elif abs(yaw_error) < self.heading_tolerance:
+                # Heading is acceptable - move forward with light correction
+                speed = math.hypot(fx, fy)
+                if speed > self.max_speed:
+                    fx = (fx / speed) * self.max_speed
+                    fy = (fy / speed) * self.max_speed
+                
+                vx = fx
+                vy = fy
+                yaw_rate = self.forward_yaw_gain * yaw_error  # Gentle correction
+            
+            else:
+                # Heading error is significant but we're not stuck yet
+                # Reduce speed and increase yaw correction
+                speed = math.hypot(fx, fy)
+                speed_reduction = max(0.3, 1.0 - abs(yaw_error) / math.pi)  # 30-100% speed
+                
+                if speed > self.max_speed * speed_reduction:
+                    fx = (fx / speed) * self.max_speed * speed_reduction
+                    fy = (fy / speed) * self.max_speed * speed_reduction
+                
+                vx = fx
+                vy = fy
+                yaw_rate = self.forward_yaw_gain * 1.5 * yaw_error  # Moderate correction
         
-        # Limit speed
-        speed = math.hypot(fx, fy)
-        if speed > self.max_speed:
-            fx = (fx / speed) * self.max_speed
-            fy = (fy / speed) * self.max_speed
-        
-        self.publish_velocity(fx, fy)
+        else:  # ALIGNING mode
+            # Stop and rotate in place to align heading
+            vx, vy = 0.0, 0.0
+            yaw_rate = self.alignment_yaw_gain * yaw_error
+            
+            # Check if alignment is complete or timed out
+            current_time = self.get_clock().now()
+            alignment_duration = (current_time - self.alignment_start_time).nanoseconds / 1e9
+            
+            if abs(yaw_error) < math.radians(15):
+                # Successfully aligned
+                self.motion_state = "FORWARD"
+                self.get_logger().info(f"Alignment complete (error: {math.degrees(yaw_error):.1f}°)")
+            elif alignment_duration > self.max_alignment_time:
+                # Timeout - force back to forward mode to avoid getting stuck
+                self.motion_state = "FORWARD"
+                self.get_logger().info(f" Alignment timeout - resuming forward motion")
+        self.publish_velocity(vx, vy, yaw_rate)
     
+    def check_if_stuck(self):
+        """Detect if robot is stuck (not making progress)"""
+        current_time = self.get_clock().now()
+        
+        # Initialize on first call
+        if self.last_stuck_check_time is None:
+            self.last_stuck_check_time = current_time
+            self.last_position = (self.current_x, self.current_y)
+            return False
+        
+        # Check periodically
+        time_elapsed = (current_time - self.last_stuck_check_time).nanoseconds / 1e9
+        
+        if time_elapsed >= self.stuck_time_threshold:
+            # Calculate distance traveled
+            distance_traveled = math.hypot(
+                self.current_x - self.last_position[0],
+                self.current_y - self.last_position[1]
+            )
+            
+            # Update for next check
+            self.last_stuck_check_time = current_time
+            self.last_position = (self.current_x, self.current_y)
+            
+            # Check if stuck
+            if distance_traveled < self.stuck_distance_threshold:
+                return True
+        
+        return False
     def attractive_force(self, target_x, target_y):
         """Pull toward target waypoint"""
         dx = target_x - self.current_x
@@ -658,10 +774,11 @@ class AutonomousExplorer(Node):
         wy = (gy * self.map_info.resolution) + self.map_info.origin.position.y
         return wx, wy
     
-    def publish_velocity(self, vx, vy):
+    def publish_velocity(self, vx, vy, yaw_rate =0.0):
         msg = Twist()
         msg.linear.x = vx
         msg.linear.y = vy
+        msg.angular.z = yaw_rate
         self.vel_pub.publish(msg)
     
     def publish_zero_velocity(self):
