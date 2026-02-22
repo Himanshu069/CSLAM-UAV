@@ -64,7 +64,6 @@ def generate_launch_description():
     
     
     return LaunchDescription([
-
         ExecuteProcess(
             cmd=["micro-xrce-dds-agent", "udp4", "-p", "8888"],
             output="screen",
@@ -80,7 +79,17 @@ def generate_launch_description():
                 {'vehicle_ns': 'x500_drone_0'}
             ],
         ),
-
+        Node(
+            package='depthai_ros_driver',
+            executable='camera_node',
+            name='oak',
+            output='screen',
+            parameters=['/home/himanshu/oak_run.yaml'],
+            remappings=[
+                ('/camera/rgb/camera_info', '/x500_drone_0/rgb/image'),
+                ('')
+            ]
+        ),
 
         #Drone 0
         Node(package='tf2_ros', executable='static_transform_publisher',
