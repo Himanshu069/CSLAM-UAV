@@ -87,7 +87,8 @@ def generate_launch_description():
             parameters=['/home/himanshu/oak_run.yaml'],
             remappings=[
                 ('/camera/rgb/camera_info', '/x500_drone_0/rgb/image'),
-                ('')
+                ('/camera/rgb/image_raw','/x500_drone_0/rgb/image'),
+                ('/camera/stereo/image_raw','/x500_drone_0/depth/image'),
             ]
         ),
 
@@ -247,7 +248,7 @@ def generate_launch_description():
             output='screen',
             prefix='xterm -hold -e',
             parameters =[
-                {"use_sim_time": }
+                {"use_sim_time": False}
             ],
             remappings=[
                 ("/cmd_vel","/x500_drone_0/cmd_vel"), 
