@@ -1,16 +1,21 @@
 #!/usr/bin/env python3
 from launch import LaunchDescription
-from launch.actions import ExecuteProcess, TimerAction
+from launch.actions import IncludeLaunchDescription,ExecuteProcess, TimerAction
+from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch_ros.actions import Node
 from ament_index_python.packages import get_package_share_directory
 import os
+import yaml
 
 def generate_launch_description():
     px4_dir = os.path.join(os.getenv("HOME"), "PX4-Autopilot")
+    yaml_file = os.path.expanduser('~/oak_run.yaml')
+    with open(yaml_file,'r') as f:
+        params = yaml.safe_load(f)
 
     def get_vslam_params(drone_ns, db_name):
         return {
-            'use_sim_time': True,
+            'use_sim_time': False,
             'frame_id': f'{drone_ns}/base_link',
             'guess_frame_id':f'{drone_ns}/base_link_stabilized',
             'map_frame_id': f'{drone_ns}/map',
@@ -23,8 +28,8 @@ def generate_launch_description():
             # 'tf_delay': 0.1,
             # 'tf_tolerance': 0.5,
             # 'subscribe_imu': True,
-            'approx_sync': False, 
-            'wait_imu_to_init': True,
+            'approx_sync': True, 
+            'wait_imu_to_init': False,
             # 'publish_tf': True,
             # 'queue_size': 200,
             # 'sync_queue_size': 100,
@@ -79,18 +84,76 @@ def generate_launch_description():
                 {'vehicle_ns': 'x500_drone_0'}
             ],
         ),
-        Node(
-            package='depthai_ros_driver',
-            executable='camera_node',
-            name='oak',
-            output='screen',
-            parameters=['/home/himanshu/oak_run.yaml'],
-            remappings=[
-                ('/camera/rgb/camera_info', '/x500_drone_0/rgb/image'),
-                ('/camera/rgb/image_raw','/x500_drone_0/rgb/image'),
-                ('/camera/stereo/image_raw','/x500_drone_0/depth/image'),
-            ]
+        # ExecuteProcess(
+        #    cmd=[
+        #        'ros2', 'run', 'depthai_ros_driver', 'camera_node',
+        #        '--ros-args',
+        #        '--params-file', yaml_file,
+        #        '-r', '/camera/rgb/camera_info:=/x500_drone_0/rgb/camera_info',
+        #        '-r', '/camera/rgb/image_raw:=/x500_drone_0/rgb/image',
+        #        '-r', '/camera/stereo/image_raw:=/x500_drone_0/depth/image'
+        #    ],
+        #    output='screen',
+       # ),
+        IncludeLaunchDescription(
+            PythonLaunchDescriptionSource([
+                os.path.join(get_package_share_directory('realsense2_camera'), 'launch', 'rs_launch.py')
+            ]),
+            launch_arguments={
+                'align_depth.enable': 'true',       
+                'pointcloud.enable': 'false',       
+                'depth_module.profile': '640x480x15', 
+                'rgb_camera.profile': '640x480x15'
+            }.items()
+         #   remappings=[
+         #       ('/camera/camera/aligned_depth_to_color/camera_info','/x500_drone_0/rgb/camera_info'),
+         #       ('/camera/camera/aligned_depth_to_color/image_raw','/x500_drone_0/depth/image'),
+         #       ('/camera/camera/color/image_raw','/x500_drone_0/rgb/image'),
+         #       ]
         ),
+        Node(
+            package='topic_tools',
+            executable='relay',
+            name='relay_camera_info',
+            arguments=[
+                '/camera/camera/aligned_depth_to_color/camera_info',
+                '/x500_drone_0/rgb/camera_info'
+         ],
+        output='screen'
+        ),
+        Node(
+            package='topic_tools',
+            executable='relay',
+            name='relay_depth_image',
+            arguments=[
+                '/camera/camera/aligned_depth_to_color/image_raw',
+                '/x500_drone_0/depth/image'
+        ],
+        output='screen'
+        ),
+        Node(
+            package='topic_tools',
+            executable='relay',
+            name='relay_rgb_image',
+            arguments=[
+                '/camera/camera/color/image_raw',
+                '/x500_drone_0/rgb/image'
+        ],
+        output='screen'
+        ),
+
+       # Node(
+        #    package='depthai_ros_driver',
+        #    executable='camera_node',
+        #    name='oak',
+        #    output='screen',
+        #    parameters=[params],
+        #    remappings=[
+        #        ('/camera/rgb/camera_info', '/x500_drone_0/rgb/image'),
+        #        ('/camera/rgb/image_raw','/x500_drone_0/rgb/image'),
+        #        ('/camera/stereo/image_raw','/x500_drone_0/depth/image'),
+        #    ]
+      #  ),
 
         #Drone 0
         Node(package='tf2_ros', executable='static_transform_publisher',
@@ -98,7 +161,12 @@ def generate_launch_description():
         
         Node(package='tf2_ros', executable='static_transform_publisher',
                 arguments=['0.12', '0.03', '0.242', '-1.570796327', '0', '-1.570796327', 'x500_drone_0/base_link', 'x500_drone_0/camera_link']),
-        
+       
+        Node(package='tf2_ros', executable='static_transform_publisher',
+     arguments=['0', '0', '0', '0', '0', '0',
+                'x500_drone_0/camera_link',
+                'camera_rgb_camera_optical_frame']),
+
         Node(package='tf2_ros', executable='static_transform_publisher',
                 arguments=['0.0123', '-0.03', '0.01878', '0', '0', '0', 'x500_drone_0/camera_link', 'x500_depth_0/camera_link/IMX214']),
         
@@ -107,23 +175,23 @@ def generate_launch_description():
 
         
         #Drone 0
-        Node(
-            package='imu_filter_madgwick',
-            executable='imu_filter_madgwick_node',
-            name='imul_filter_0',
-            namespace='x500_drone_0',
-            output='screen',
-            parameters=[{
-                'use_mag': False,
-                'world_frame': 'enu',
-                'publish_tf': False,
-                'use_sim_time': False,
-            }],
-            remappings=[
-                ('imu/data_raw', '/x500_drone_0/imu/data_raw'),
-                ('imu/data',     '/x500_drone_0/imu/data'),
-            ]
-        ),
+       # Node(
+       #     package='imu_filter_madgwick',
+       #     executable='imu_filter_madgwick_node',
+       #     name='imul_filter_0',
+       #     namespace='x500_drone_0',
+       #     output='screen',
+       #     parameters=[{
+       #         'use_mag': False,
+       #         'world_frame': 'enu',
+       #         'publish_tf': False,
+       #         'use_sim_time': False,
+       #     }],
+       #     remappings=[
+       #         ('imu/data_raw', '/x500_drone_0/imu/data_raw'),
+       #         ('imu/data',     '/x500_drone_0/imu/data'),
+       #     ]
+       # ),
         Node(
             package='rtabmap_util',
             executable='imu_to_tf',
@@ -234,7 +302,6 @@ def generate_launch_description():
             name='exploration_planner_0',
             namespace='x500_drone_0',
             output='screen',
-            prefix='xterm -hold -e',
             remappings = [
                 ("map","/x500_drone_0/map"),
                 ("fmu/out/vehicle_local_position","/fmu/out/vehicle_local_position"),
@@ -242,11 +309,10 @@ def generate_launch_description():
         ),
         Node(
             package='px4_ros_com',
-            executable='offboard_exploration',
+            executable='offboard_cmd_vel',
             name='drone_0_control',
             namespace='x500_drone_0',
             output='screen',
-            prefix='xterm -hold -e',
             parameters =[
                 {"use_sim_time": False}
             ],
