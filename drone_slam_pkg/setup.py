@@ -13,7 +13,7 @@ setup(
             ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
 
-        ('share/' + package_name + '/launch', ['launch/px4_gazebo.launch.py']),
+        ('share/' + package_name + '/launch', glob(os.path.join('launch', '*.launch.py'))),
         (os.path.join('share', package_name, 'config'),
             glob('config/*.yaml')),
     ],
@@ -29,7 +29,11 @@ setup(
                         'odom_drone_tf = drone_slam_pkg.odom_drone_tf:main',
                         'offboard_control = drone_slam_pkg.offboard_control:main',
                         'exploration_planner = drone_slam_pkg.exploration_planner:main',
-                        'offboard_radius = drone_slam_pkg.offboard_radius:main'
+                        'offboard_radius = drone_slam_pkg.offboard_radius:main',
+                        'control = drone_slam_pkg.control:main',
+                        'control1 = drone_slam_pkg.control1:main',
+                        'velocity_control = drone_slam_pkg.velocity_control:main',
+                        'velocity_control1 = drone_slam_pkg.velocity_control1:main',
 
             ],
         },
