@@ -522,7 +522,7 @@ class AutonomousExplorer(Node):
             if gx is None:
                 return False
             
-            # Treat unknown as traversable (optimistic)
+            # Treat unknown as traversable (soptimistic)
             if self.map_data[gy, gx] >= 50:
                 return False
         
@@ -566,59 +566,44 @@ class AutonomousExplorer(Node):
         desired_yaw = math.atan2(fy, fx)
         yaw_error = self.normalize_angle(desired_yaw - self.current_yaw)
 
-        is_stuck = self.check_if_stuck()
-
-        if self.motion_state == "FORWARD":
-            # Try to move forward while gently correcting heading
-            if is_stuck and abs(yaw_error) > math.radians(30):
-                self.motion_state = "ALIGNING"
-                self.alignment_start_time = self.get_clock().now()
-                self.get_logger().info(f"🔄 Stuck detected - switching to ALIGNMENT mode (error: {math.degrees(yaw_error):.1f}°)")
-                vx, vy, yaw_rate = 0.0, 0.0, self.alignment_yaw_gain * yaw_error
-            
-            # Normal forward motion with gentle heading correction
-            elif abs(yaw_error) < self.heading_tolerance:
-                # Heading is acceptable - move forward with light correction
-                speed = math.hypot(fx, fy)
-                if speed > self.max_speed:
-                    fx = (fx / speed) * self.max_speed
-                    fy = (fy / speed) * self.max_speed
-                
-                vx = fx
-                vy = fy
-                yaw_rate = self.forward_yaw_gain * yaw_error  # Gentle correction
-            
-            else:
-                # Heading error is significant but we're not stuck yet
-                # Reduce speed and increase yaw correction
-                speed = math.hypot(fx, fy)
-                speed_reduction = max(0.3, 1.0 - abs(yaw_error) / math.pi)  # 30-100% speed
-                
-                if speed > self.max_speed * speed_reduction:
-                    fx = (fx / speed) * self.max_speed * speed_reduction
-                    fy = (fy / speed) * self.max_speed * speed_reduction
-                
-                vx = fx
-                vy = fy
-                yaw_rate = self.forward_yaw_gain * 1.5 * yaw_error  # Moderate correction
+        vx, vy, yaw_rate = 0.0, 0.0, 0.0
         
-        else:  # ALIGNING mode
-            # Stop and rotate in place to align heading
-            vx, vy = 0.0, 0.0
+        ALIGNMENT_THRESHOLD = math.radians(10.0) # Must be within 10 degrees to move
+        STOP_THRESHOLD = math.radians(35.0)
+        
+        if abs(yaw_error) > ALIGNMENT_THRESHOLD:
+            # --- ROTATION PHASE ---
+            # Stop moving and just rotate
+            vx = 0.0
+            vy = 0.0
+            # Scale yaw rate based on error, but cap it
             yaw_rate = self.alignment_yaw_gain * yaw_error
             
-            # Check if alignment is complete or timed out
-            current_time = self.get_clock().now()
-            alignment_duration = (current_time - self.alignment_start_time).nanoseconds / 1e9
+            # Optional: Log if we are correcting a large deviation
+            if abs(yaw_error) > STOP_THRESHOLD:
+                self.get_logger().info(f"Re-aligning: {math.degrees(yaw_error):.1f} deg", throttle_duration_sec=2.0)
+        else:
+            # --- TRANSLATION PHASE ---
+            # We are aligned! Now move forward along the resultant vector
+            speed = math.hypot(fx, fy)
+            if speed > self.max_speed:
+                speed = self.max_speed
             
-            if abs(yaw_error) < math.radians(15):
-                # Successfully aligned
-                self.motion_state = "FORWARD"
-                self.get_logger().info(f"Alignment complete (error: {math.degrees(yaw_error):.1f}°)")
-            elif alignment_duration > self.max_alignment_time:
-                # Timeout - force back to forward mode to avoid getting stuck
-                self.motion_state = "FORWARD"
-                self.get_logger().info(f" Alignment timeout - resuming forward motion")
+            # Since we are aligned, we move in the direction we are facing
+            # but we use the potential field's magnitude for speed control
+            vx = speed * math.cos(self.current_yaw)
+            vy = speed * math.sin(self.current_yaw)
+            
+            # Small heading maintenance while moving
+            yaw_rate = self.forward_yaw_gain * yaw_error
+
+        # 5. Final Stuck Check / Safety
+        if self.check_if_stuck():
+            self.get_logger().warn("Robot stuck! Clearing waypoints to force replan.")
+            self.waypoints = []
+            self.publish_zero_velocity()
+            return
+        
         self.publish_velocity(vx, vy, yaw_rate)
     
     def check_if_stuck(self):

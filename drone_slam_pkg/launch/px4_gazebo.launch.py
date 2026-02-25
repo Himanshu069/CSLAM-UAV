@@ -303,7 +303,7 @@ def generate_launch_description():
                 ),
                 Node(
                     package='px4_ros_com',
-                    executable='offboard_exploration',
+                    executable='offboard_cmd_vel',
                     name='drone_0_control',
                     namespace='x500_drone_0',
                     output='screen',
@@ -440,7 +440,6 @@ def generate_launch_description():
                     namespace="/x500_drone_1",
                     parameters=[{'use_sim_time': True}]
                 ),
-
                 Node(
                     package='px4_ros_com',         
                     executable='ros_odometry_to_vehicle_odometry',  
