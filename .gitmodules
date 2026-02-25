@@ -3,11 +3,6 @@
 	url = https://github.com/PX4/px4_msgs.git
 	branch = release/1.16
 
-[submodule "px4_ros_bridge"]
-	path = px4_ros_bridge
-	url = https://github.com/Himanshu069/PX4_ROS_BRIDGE.git
-	branch = main
-
 #[submodule "px4-ros2-interface-lib"]
 #	path = px4-ros2-interface-lib
 #	url = https://github.com/Auterion/px4-ros2-interface-lib.git
@@ -26,3 +21,4 @@
 [submodule "PX4_ROS_BRIDGE"]
 	path = PX4_ROS_BRIDGE
 	url = https://github.com/Himanshu069/PX4_ROS_BRIDGE.git
+	branch = main
