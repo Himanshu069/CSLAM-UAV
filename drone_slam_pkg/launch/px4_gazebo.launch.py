@@ -296,6 +296,15 @@ def generate_launch_description():
                     namespace='x500_drone_0',
                     output='screen',
                     prefix='xterm -hold -e',
+                    parameters = [
+                       {
+                            "drone_radius": 0.26,
+                            "other_drone_pose_topic": '/x500_drone_1/localization_pose',
+                            "other_drone_safety_radius": 3,
+                            "other_drone_init_x": 2.0 ,
+                            "other_drone_init_y": 0.0
+                       }
+                    ],
                     remappings = [
                         ("map","/x500_drone_0/map"),
                         ("fmu/out/vehicle_local_position","/fmu/out/vehicle_local_position"),
@@ -315,6 +324,16 @@ def generate_launch_description():
                         ("/cmd_vel","/x500_drone_0/cmd_vel"), 
                     ]
                 ),
+                Node(
+                    package='rtabmap_costmap_plugins', executable='voxel_marker', output='screen',
+                    namespace="x500_drone_0",
+                    parameters=[{'use_sim_time': True}],
+                    remappings=[
+                        ("voxel_grid","/x500_drone_0/voxel_grid"),
+                        ("visualization_marker","/x500_drone_0/visualization_marker"),
+                    ]
+                    
+                    ),
                 # Node(
                 #     package='drone_slam_pkg',
                 #     executable='offboard_control',
