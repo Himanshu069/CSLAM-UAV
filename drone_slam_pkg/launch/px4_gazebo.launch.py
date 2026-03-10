@@ -21,8 +21,8 @@ def generate_launch_description():
             'map_frame_id': f'{drone_ns}/map',
             'odom_frame_id': f'{drone_ns}/odom',
             
-            'subscribe_rgbd': True,
-            # 'subscribe_depth': False,
+            # 'subscribe_rgbd': True,
+            'subscribe_depth': True,
             'subscribe_odom_info':True,
             'wait_for_transform': 0.5,
             # 'tf_delay': 0.1,
@@ -160,18 +160,19 @@ def generate_launch_description():
                 arguments=['0', '0', '0', '0', '0', '0', 'x500_drone_0/base_link', 'x500_depth_0/base_link/imu_sensor']),
         
         Node(package='tf2_ros', executable='static_transform_publisher',
-                arguments=['0.12', '0.03', '0.242', '-1.570796327', '0', '-1.570796327', 'x500_drone_0/base_link', 'x500_drone_0/camera_link']),
+                arguments=['0.12', '0.03', '0.242', '0', '1.570796327', '0', 'x500_drone_0/base_link', 'camera_link']),
        
-        Node(package='tf2_ros', executable='static_transform_publisher',
-     arguments=['0', '0', '0', '0', '0', '0',
-                'x500_drone_0/camera_link',
-                'camera_rgb_camera_optical_frame']),
+      #for OAK-D-PRO_W
+    #     Node(package='tf2_ros', executable='static_transform_publisher',
+    #  arguments=['0', '0', '0', '0', '0', '0',
+    #             'x500_drone_0/camera_link',
+    #             'camera_rgb_camera_optical_frame']),
 
         Node(package='tf2_ros', executable='static_transform_publisher',
-                arguments=['0.0123', '-0.03', '0.01878', '0', '0', '0', 'x500_drone_0/camera_link', 'x500_depth_0/camera_link/IMX214']),
+                arguments=['0.0123', '-0.03', '0.01878', '0', '0', '0', 'camera_link', 'camera_link/IMX214']),
         
         Node(package='tf2_ros', executable='static_transform_publisher',
-                arguments=['0.01233', '-0.03', '0.01878', '0', '0', '0', 'x500_drone_0/camera_link', 'x500_drone_0/camera_link/StereoOV7251']),
+                arguments=['0.01233', '-0.03', '0.01878', '0', '0', '0', 'camera_link', 'x500_drone_0/camera_link/StereoOV7251']),
 
         
         #Drone 0
@@ -215,7 +216,7 @@ def generate_launch_description():
             output="screen",
             parameters=[{
                 "use_sim_time": False,
-                "approx_sync": True,
+                "approx_sync": False,
                 "approx_sync_max_interval": 0.04,
                 "queue_size": 200,
                 "sync_queue_size": 100,
