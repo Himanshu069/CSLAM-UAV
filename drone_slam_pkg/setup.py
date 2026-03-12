@@ -13,7 +13,7 @@ setup(
             ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
 
-        ('share/' + package_name + '/launch', ['launch/px4_gazebo.launch.py']),
+        ('share/' + package_name + '/launch', glob(os.path.join('launch', '*.launch.py'))),
         (os.path.join('share', package_name, 'config'),
             glob('config/*.yaml')),
     ],

@@ -23,7 +23,7 @@ def generate_launch_description():
             # 'tf_delay': 0.1,
             # 'tf_tolerance': 0.5,
             # 'subscribe_imu': True,
-            'approx_sync': False, 
+            'approx_sync': True, 
             'wait_imu_to_init': True,
             # 'publish_tf': True,
             # 'queue_size': 200,
@@ -37,16 +37,22 @@ def generate_launch_description():
 
             'Optimizer/GravitySigma': '0.1',
             'Vis/FeatureType': '6',
-            'Kp/DetectorStrategy': '6',
+            # 'Kp/DetectorStrategy': '6',
             'Grid/MapFrameProjection': 'true',
             'NormalsSegmentation': 'false',
             # 'Grid/MinGroundHeight': '-0.2',
             'Grid/MaxGroundHeight': '1.15' ,
             'Grid/MaxObstacleHeight': '1.75',
             'RGBD/StartAtOrigin': 'true',
+            # 'Vis/MaxFeatures': '500',
+            'Mem/ImagePreDecimation': '1',
+            'Mem/ImagePostDecimation': '2',
+            'OdomF2M/MaxSize': '1000',
+            'Odom/ImageDecimation': '2',
             # 'Grid/GroundIsObstacle': 'false',
-            # 'Grid/RayTracing': True,
-
+            'Grid/RayTracing': 'true',
+            'Grid/CellSize': '0.1',
+            # 'Rtabmap/DetectionRate': '2',
             # 'Grid/MaxGroundHeight': '0.2',   # indoor
             # 'Grid/MinGroundHeight': '-0.2',
             # 'Grid/MinObstacleHeight': '2.0',
@@ -59,17 +65,8 @@ def generate_launch_description():
             
             'database_path': f'~/.ros/{db_name}.db'
         }
-
-    
-    
     
     return LaunchDescription([
-        ExecuteProcess(
-            cmd=["gnome-terminal", "--", "make", "-C", px4_dir, "px4_sitl", "gz_x500_depth"],
-            output="screen",
-            shell=True
-        ),
-
         ExecuteProcess(
             cmd=["gnome-terminal", "--", "./QGroundControl-x86_64.AppImage"],
             cwd=os.path.expanduser("~"),
@@ -83,7 +80,18 @@ def generate_launch_description():
         ),
 
         TimerAction(
-            period=15.0,
+            period = 1.0,
+            actions = [
+                ExecuteProcess(
+                    cmd=["gnome-terminal", "--", "make", "-C", px4_dir, "px4_sitl", "gz_x500_depth"],
+                    output="screen",
+                    shell=True
+                )
+            ],
+        ),
+
+        TimerAction(
+            period = 15.0,
             actions=[
                 ExecuteProcess(
                     cmd=[
@@ -289,51 +297,16 @@ def generate_launch_description():
                     ],
                     output='screen'
                 ),
-                Node(
-                    package='drone_slam_pkg',
-                    executable='exploration_planner',
-                    name='exploration_planner_0',
-                    namespace='x500_drone_0',
-                    output='screen',
-                    prefix='xterm -hold -e',
-                    parameters = [
-                       {
-                            "drone_radius": 0.26,
-                            "other_drone_pose_topic": '/x500_drone_1/localization_pose',
-                            "other_drone_safety_radius": 3,
-                            "other_drone_init_x": 2.0 ,
-                            "other_drone_init_y": 0.0
-                       }
-                    ],
-                    remappings = [
-                        ("map","/x500_drone_0/map"),
-                        ("fmu/out/vehicle_local_position","/fmu/out/vehicle_local_position"),
-                    ]
-                ),
-                Node(
-                    package='px4_ros_com',
-                    executable='offboard_cmd_vel',
-                    name='drone_0_control',
-                    namespace='x500_drone_0',
-                    output='screen',
-                    prefix='xterm -hold -e',
-                    parameters =[
-                        {"use_sim_time": True}
-                    ],
-                    remappings=[
-                        ("/cmd_vel","/x500_drone_0/cmd_vel"), 
-                    ]
-                ),
-                Node(
-                    package='rtabmap_costmap_plugins', executable='voxel_marker', output='screen',
-                    namespace="x500_drone_0",
-                    parameters=[{'use_sim_time': True}],
-                    remappings=[
-                        ("voxel_grid","/x500_drone_0/voxel_grid"),
-                        ("visualization_marker","/x500_drone_0/visualization_marker"),
-                    ]
-                    
-                    ),
+
+                # Node(
+                #     package='rtabmap_costmap_plugins', executable='voxel_marker', output='screen',
+                #     namespace="x500_drone_0",
+                #     parameters=[{'use_sim_time': True}],
+                #     remappings=[
+                #         ("voxel_grid","/x500_drone_0/voxel_grid"),
+                #         ("visualization_marker","/x500_drone_0/visualization_marker"),
+                #     ]    
+                #     ),
                 # Node(
                 #     package='drone_slam_pkg',
                 #     executable='offboard_control',
@@ -471,17 +444,17 @@ def generate_launch_description():
                     ],
                     output='screen'
                 ),
-                Node(
-                    package='drone_slam_pkg',
-                    executable='exploration_planner',
-                    name='exploration_planner_1',
-                    output='screen',
-                    remappings = [
-                        ("map","/x500_drone_1/map"),
-                        ("fmu/out/vehicle_local_position","px4_1/fmu/out/vehicle_local_position"),
-                    ]
+                # Node(
+                #     package='drone_slam_pkg',
+                #     executable='exploration_planner',
+                #     name='exploration_planner_1',
+                #     output='screen',
+                #     remappings = [
+                #         ("map","/x500_drone_1/map"),
+                #         ("fmu/out/vehicle_local_position","px4_1/fmu/out/vehicle_local_position"),
+                #     ]
 
-                ),
+                # ),
             ],
         ),
     ])

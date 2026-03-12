@@ -10,8 +10,8 @@ import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy, DurabilityPolicy
 from nav_msgs.msg import OccupancyGrid, Path
-from geometry_msgs.msg import PoseStamped, Twist, PoseWithCovarianceStamped
-from px4_msgs.msg import VehicleLocalPosition, VehicleAttitude
+from geometry_msgs.msg import PoseStamped, Twist, PoseWithCovarianceStamped, PoseArray, Pose, Point
+from px4_msgs.msg import VehicleLocalPosition, VehicleAttitude, DistanceSensor
 from visualization_msgs.msg import Marker, MarkerArray
 from std_msgs.msg import ColorRGBA
 from scipy.ndimage import binary_dilation
@@ -36,7 +36,9 @@ class AutonomousExplorer(Node):
         self.declare_parameters("", [
             ("min_frontier_size", 1),        # Min cells in frontier cluster
             ("frontier_search_rate", 1.0),   # Hz
-            ("exploration_complete_threshold", 0.95),  # 95% map known
+            ("exploration_complete_threshold", 0.95), # 95% map known
+            ("frontier_weight_approach", 2.0),  
+            ("map_frame", "map"),
             
             # --- RRT* PARAMETERS ---
             ("rrt_max_iter", 3000),
@@ -49,17 +51,17 @@ class AutonomousExplorer(Node):
             ("k_att", 2.0),
             ("k_yaw", 1.5),
             ("k_rep", 40.0),
-            ("influence_radius", 1.5),
+            ("influence_radius", 2.5),
             ("pf_update_rate", 10.0),        # Hz
-            ("max_speed", 1.0),
-            ("waypoint_threshold", 0.5),
+            ("max_speed", 0.2),
+            ("waypoint_threshold", 1.0),
 
             ("heading_tolerance", 30.0),     # degrees - move forward if within this
             ("stuck_time_threshold", 4.0),   # seconds - time to detect astuck
             ("stuck_distance_threshold", 0.15),  # meters - min movement expected
             ("alignment_yaw_gain", 1.0),     # yaw control gain during alignment
             ("forward_yaw_gain", 0.5),       # yaw control gain during forward motion
-                        
+                      
             # --- EXPLORATION STRATEGY ---
             ("frontier_weight_size", 1.0),   # Prefer larger frontiers
             ("frontier_weight_distance", 0.5), # Prefer closer frontiers
@@ -75,15 +77,17 @@ class AutonomousExplorer(Node):
             ("other_drone_init_y", 0.0)
         ])
         
+        self.map_frame = self.get_parameter("map_frame").value
         #Altitude
         self.takeoff_altitude = 1.3  # meters
         self.altitude_ready = False
         self.current_z = 0.0
-
+        self.current_range = 0.0
         # Frontier params
         self.min_frontier_size = self.get_parameter("min_frontier_size").value
         self.frontier_rate = self.get_parameter("frontier_search_rate").value
         self.exploration_threshold = self.get_parameter("exploration_complete_threshold").value
+        self.w_approach = self.get_parameter("frontier_weight_approach").value
         
         # RRT* params
         self.rrt_max_iter = self.get_parameter("rrt_max_iter").value
@@ -91,6 +95,7 @@ class AutonomousExplorer(Node):
         self.rrt_goal_rate = self.get_parameter("rrt_goal_sample_rate").value
         self.rrt_radius = self.get_parameter("rrt_search_radius").value
         self.rrt_replan_rate = self.get_parameter("rrt_replan_rate").value
+        self._last_replan_time = None
         
         # PF params
         self.k_att = self.get_parameter("k_att").value
@@ -108,6 +113,12 @@ class AutonomousExplorer(Node):
         self.forward_yaw_gain = self.get_parameter("forward_yaw_gain").value
         self.w_size = self.get_parameter("frontier_weight_size").value
         self.w_dist = self.get_parameter("frontier_weight_distance").value
+        self._last_apf_forces = {
+            "att": (0.0, 0.0),
+            "rep_obs": (0.0, 0.0),
+            "rep_drone": (0.0, 0.0),
+            "total": (0.0, 0.0),
+        }
         
         #Safety/costmap
         self.drone_radius = self.get_parameter("drone_radius").value
@@ -133,11 +144,11 @@ class AutonomousExplorer(Node):
         self.goal_x = None
         self.goal_y = None
         self.autonomous_mode = True  # Auto-exploration enabled
-        self.motion_state = "FORWARD"  # "FORWARD" or "ALIGNING"
+        # self.motion_state = "FORWARD"  # "FORWARD" or "ALIGNING"
         self.last_position = (0.0, 0.0)
         self.last_stuck_check_time = None
-        self.alignment_start_time = None
-        self.max_alignment_time = 3.0  # seconds
+        # self.alignment_start_time = None
+        # self.max_alignment_time = 3.0  # seconds
 
         # Path following
         self.waypoints = []
@@ -147,7 +158,12 @@ class AutonomousExplorer(Node):
         self.visited_frontiers = []  # Avoid revisiting
         self.exploration_complete = False
         
-        # QoS
+        self.distance_field = None
+        self.local_min_count = 0
+        self.local_min_threshold = 5
+        self.escape_cycles_remaining = 0
+        self.escape_vec = (0.0, 0.0)
+        
         qos_map = QoSProfile(
             reliability=ReliabilityPolicy.RELIABLE,
             durability=DurabilityPolicy.VOLATILE,
@@ -161,28 +177,35 @@ class AutonomousExplorer(Node):
             history=HistoryPolicy.KEEP_LAST,
             depth=1,
         )
-        
-        # Subscribers
+        qos_path = QoSProfile(
+            reliability=ReliabilityPolicy.RELIABLE,
+            durability=DurabilityPolicy.TRANSIENT_LOCAL,
+            history=HistoryPolicy.KEEP_LAST,
+            depth=1,
+        )
         self.create_subscription(OccupancyGrid, "map", self.map_cb, qos_map)
         self.create_subscription(VehicleLocalPosition, "fmu/out/vehicle_local_position", 
-                                 self.pos_cb, qos_px4)
+                                self.pos_cb, qos_px4)
         self.create_subscription(VehicleAttitude, "fmu/out/vehicle_attitude", 
                                 self.attitude_cb, qos_px4)
         self.create_subscription(PoseStamped, "goal_pose", self.goal_cb, 10)
         self.create_subscription(PoseWithCovarianceStamped, self.other_drone_pose_topic,
-                                 self.other_drone_pose_cb, qos_map)
-        # Publishers
+                                self.other_drone_pose_cb, qos_map)
+        self.create_subscription(DistanceSensor, "fmu/in/distance_sensor",
+                                self.range_cb, qos_px4)
+
         self.vel_pub = self.create_publisher(Twist, "cmd_vel", 10)
-        self.path_pub = self.create_publisher(Path, "global_path", 10)
+        self.path_pub = self.create_publisher(Path, "global_path", qos_path)
         self.frontier_pub = self.create_publisher(MarkerArray, "frontiers", 10)
         self.goal_pub = self.create_publisher(PoseStamped, "current_goal", 10)
         self.inflated_map_pub = self.create_publisher(OccupancyGrid, "inflated_map", qos_map)
+        self.apf_path_pub = self.create_publisher(Path, "apf_path", qos_path)
+        self.waypoints_pub = self.create_publisher(PoseArray, "rrt_waypoints", qos_path)
+        self.apf_markers_pub = self.create_publisher(MarkerArray, "apf_forces", 10)
 
-        # Timers
         self.frontier_timer = self.create_timer(1.0 / self.frontier_rate, self.frontier_search_loop)
         self.rrt_timer = self.create_timer(1.0 / self.rrt_replan_rate, self.rrt_replan)
         self.pf_timer = self.create_timer(1.0 / self.pf_rate, self.potential_field_control)
-        # self.test_pose_timer = self.create_timer(0.1, self.fake_pose)
         
         self.get_logger().info(" AUTONOMOUS EXPLORER ONLINE!")
         self.get_logger().info("   Frontier Detection: ON")
@@ -194,10 +217,11 @@ class AutonomousExplorer(Node):
         self.get_logger().info(
             f"   Other drone init pose:   ({self.other_drone_init_x:.2f}, {self.other_drone_init_y:.2f})"
         )
+        self.get_logger().info(f"   APF viz topic: ~/apf_forces  (MarkerArray)")
     
     def pos_cb(self, msg):
-        self.current_x = msg.y
-        self.current_y = msg.x
+        self.current_x = msg.x
+        self.current_y = msg.y
         self.current_z = msg.z
         
         if not self.altitude_ready:
@@ -213,6 +237,31 @@ class AutonomousExplorer(Node):
             else:
                 return  # still no
     
+    def range_cb(self, msg):
+        self.current_range = msg.current_distance
+
+        if not self.altitude_ready:
+            self.get_logger().info(
+                f"Waiting for takeoff... rangefinder: {self.current_range:.2f}m "
+                f"/ {self.takeoff_altitude:.2f}m",
+                throttle_duration_sec=1.0
+                )
+            
+            if self.current_range >= (self.takeoff_altitude - 0.15):
+                self.altitude_ready = True
+                self.get_logger().info(
+                    f"Takeoff altitude reached! Rangefinder: {self.current_range:.2f}m "
+                    f"— starting exploration"
+                    )
+        else:
+            #Safety monitor while flying
+            if self.current_range < 0.4:
+                self.get_logger().warn(
+                    f"OBSTACLE CLOSE BELOW: {self.current_range:.2f}m — "
+                    f"PX4 terrain follow should be rising!",
+                    throttle_duration_sec=1.0
+                    )
+
     def attitude_cb(self, msg):
     # PX4 Quaternions are typically [w, x, y, z]
         q = msg.q
@@ -221,6 +270,19 @@ class AutonomousExplorer(Node):
         yaw_ned = math.atan2(siny_cosp, cosy_cosp)     
         self.current_yaw = self.normalize_angle(math.pi / 2.0 - yaw_ned)    
     
+    def _build_distance_field(self):
+        """
+        Compute a float32 array (same shape as map) where every cell holds the
+        Euclidean distance (metres) to the nearest obstacle cell.
+        Called inside map_cb after _inflate_map.
+        """
+        if self.map_data is None:
+            return
+        obstacle_mask = (self.map_data >= 50)
+        # EDT returns distance in *cells*; multiply by resolution for metres
+        dist_cells = ndimage.distance_transform_edt(~obstacle_mask)
+        self.distance_field = dist_cells * self.map_info.resolution  
+
     def map_cb(self, msg):
         self.map_info = msg.info
         raw = np.array(msg.data, dtype=np.int8).reshape(
@@ -233,6 +295,7 @@ class AutonomousExplorer(Node):
         self.get_logger().info(
         f"Map values: {dict(zip(unique.tolist(), counts.tolist()))}"
         )
+        self._build_distance_field()
         self._publish_inflated_map(msg)
     
     def goal_cb(self, msg):
@@ -240,7 +303,7 @@ class AutonomousExplorer(Node):
         self.goal_y = msg.pose.position.y
         self.current_waypoint_idx = 0
         self.autonomous_mode = False # Disable auto-exploration
-        self.motion_state = "FORWARD"
+        # self.motion_state = "FORWARD"
         self.get_logger().info(f"Manual Goal Set: ({self.goal_x:.1f}, {self.goal_y:.1f})")
         self.get_logger().info(" Autonomous exploration PAUSED")
         self.rrt_replan()
@@ -262,24 +325,40 @@ class AutonomousExplorer(Node):
         return angle
     
     def _inflate_map(self, raw: np.ndarray, resolution: float) -> np.ndarray:
-        cell_radius = math.ceil(self.drone_radius / resolution)
-
-        y_idx, x_idx = np.ogrid[-cell_radius:cell_radius + 1,
-                                 -cell_radius:cell_radius + 1]
-        struct = (x_idx ** 2 + y_idx ** 2) <= cell_radius ** 2
-
+        """
+        Binary costmap:
+        - Obstacles (>=50): 100
+        - Within drone_radius of obstacle: 99 (lethal)
+        - Within drone_radius of unknown (-1) border: 99 (lethal)
+        - Everything else: passthrough (0 or -1)
+        """
         obstacle_mask = (raw >= 50)
-        inflated_mask = binary_dilation(obstacle_mask, structure=struct)
+        # unknown_mask = (raw == -1)
+        free_mask = (raw == 0)
 
-        inflated = raw.copy()
-        newly_occupied = inflated_mask & ~obstacle_mask
-        inflated[newly_occupied] = 100
+        # Inflate obstacles
+        inflate_cells = max(1, int(math.ceil(self.drone_radius / resolution)))
+        struct = np.ones((2 * inflate_cells + 1, 2 * inflate_cells + 1), dtype=bool)
+
+        inflated_obstacle = binary_dilation(obstacle_mask, structure=struct)
+        
+        # Inflate unknown borders — only the free cells adjacent to unknown get marked
+        # inflated_unknown = binary_dilation(unknown_mask, structure=struct)
+        # unknown_border_mask = inflated_unknown & free_mask  # don't mark unknown itself as lethal
+
+        inflated = raw.copy().astype(np.int8)
+        
+        # Apply lethal zones (don't overwrite actual obstacle cells)
+        inflated[inflated_obstacle & ~obstacle_mask] = 99
+        # inflated[unknown_border_mask] = 99
+        inflated[obstacle_mask] = 100
 
         self.get_logger().debug(
-            f"Map inflated: {int(np.sum(newly_occupied))} cells added "
-            f"(drone_radius={self.drone_radius:.2f} m, kernel={cell_radius} px)"
+            f"Binary costmap: obstacles={int(obstacle_mask.sum())}, "
+            f"lethal_obs={int((inflated_obstacle & ~obstacle_mask).sum())}, "
+            f"(inflate_radius={self.drone_radius:.2f}m = {inflate_cells} cells)"
         )
-        return inflated    
+        return inflated
     
     def _publish_inflated_map(self, original_msg: OccupancyGrid):
         if self.inflated_map is None:
@@ -343,7 +422,7 @@ class AutonomousExplorer(Node):
             self.goal_x, self.goal_y = best_frontier
             self.autonomous_mode = True
             self.current_waypoint_idx = 0
-            self.motion_state = "FORWARD" 
+            # self.motion_state = "FORWARD" 
             self.get_logger().info(f"New Exploration Goal: ({self.goal_x:.1f}, {self.goal_y:.1f})")
             
             # Publish goal marker
@@ -421,7 +500,12 @@ class AutonomousExplorer(Node):
             centroid_x = sum(p[0] for p in cluster) / len(cluster)
             centroid_y = sum(p[1] for p in cluster) / len(cluster)
             
-            # Check if already visited
+            gx, gy = self.world_to_grid(centroid_x, centroid_y)
+            if gx is None:
+                continue
+            if self.inflated_map[gy, gx] >= 50:
+                continue
+            
             if self.is_visited((centroid_x, centroid_y)):
                 continue
             
@@ -433,8 +517,8 @@ class AutonomousExplorer(Node):
             distance_score = 1.0 / (distance + 0.1)  # Avoid division by zero
             
             # Combined score
-            score = (self.w_size * size_score) + (self.w_dist * distance_score * 100)
-            
+            approach_score = self.score_approach_corridor(self.current_x, self.current_y, centroid_x, centroid_y)
+            score = (self.w_size * size_score) + (self.w_dist * distance_score * 100) + (self.w_approach * approach_score * 100)            
             if score > best_score:
                 best_score = score
                 best_centroid = (centroid_x, centroid_y)
@@ -445,6 +529,26 @@ class AutonomousExplorer(Node):
         
         return best_centroid
     
+    def score_approach_corridor(self, x1, y1, x2, y2, sample_res=0.1):
+        if self.map_data is None:
+            return 0.0
+        dist  = math.hypot(x2 - x1, y2 - y1)
+        steps = max(int(dist / sample_res), 1)
+        known_free  = 0
+        total_steps = 0
+        for i in range(steps + 1):
+            t = i / steps
+            x = x1 + t * (x2 - x1)
+            y = y1 + t * (y2 - y1)
+            gx, gy = self.world_to_grid(x, y)
+            if gx is None:
+                total_steps += 1
+                continue
+            if self.map_data[gy, gx] == 0:
+                known_free += 1
+            total_steps += 1
+        return known_free / max(total_steps, 1)
+
     def is_visited(self, frontier_pos, threshold=2.0):
         """Check if frontier is too close to already visited frontiers"""
         for visited in self.visited_frontiers:
@@ -480,16 +584,60 @@ class AutonomousExplorer(Node):
         path = self.rrt_star(start, goal)
         
         if path:
+            # safe_path = self._truncate_at_unknown(path)
+            # self.waypoints = safe_path
             self.waypoints = path
+            self.current_waypoint_idx = 1
+            self._last_replan_time = self.get_clock().now()
+            self.last_stuck_check_time = None
+            self.last_position = (self.current_x, self.current_y)
             self.current_waypoint_idx = 0
-            self.get_logger().info(f"Path found: {len(path)} waypoints")
-            self.publish_path_viz(path)
+            self.publish_path_viz(path)  
+            self.get_logger().info(
+                f"Path found: {len(path)} waypoints, "
+                # f"safe portion: {len(safe_path)} waypoints"
+            )
         else:
             self.get_logger().warn(" RRT* failed - will try again")
     
+    # def _truncate_at_unknown(self, path, sample_res=0.1):
+    #     if self.map_data is None:
+    #         return path
+    #     safe = [path[0]]
+    #     for i in range(1, len(path)):
+    #         x1, y1 = path[i - 1]
+    #         x2, y2 = path[i]
+    #         if self._segment_has_unknown(x1, y1, x2, y2, sample_res):
+    #             self.get_logger().info(
+    #                 f"Path truncated at segment {i}/{len(path)} "
+    #                 f"— holding until map fills in"
+    #             )
+    #             break  # don't append — hold before unknown space
+    #         safe.append((x2, y2))
+    #     if len(safe) <= 1:
+    #         self.get_logger().warn(
+    #             "No safe waypoints available — holding position"
+    #         )
+    #         return []
+    #     return safe
+    
+    # def _segment_has_unknown(self, x1, y1, x2, y2, sample_res=0.1):
+    #     dist  = math.hypot(x2 - x1, y2 - y1)
+    #     steps = max(int(dist / sample_res), 1)
+    #     for i in range(steps + 1):
+    #         t  = i / steps
+    #         x  = x1 + t * (x2 - x1)
+    #         y  = y1 + t * (y2 - y1)
+    #         gx, gy = self.world_to_grid(x, y)
+    #         if gx is None:
+    #             return True
+    #         if self.map_data[gy, gx] == -1:
+    #             return True
+    #     return False
+
     def rrt_star(self, start, goal):
         """RRT* algorithm - returns list of (x,y) waypoints"""
-   
+
         start_node = RRTNode(start[0], start[1])
         nodes = [start_node]
         
@@ -622,76 +770,100 @@ class AutonomousExplorer(Node):
         
         target_x, target_y = self.waypoints[self.current_waypoint_idx]
         
-        # Check if reached current waypoint
         dist = math.hypot(target_x - self.current_x, target_y - self.current_y)
         if dist < self.wp_threshold:
             self.current_waypoint_idx += 1
-            self.motion_state = "FORWARD" 
+            # self.motion_state = "FORWARD" 
             if self.current_waypoint_idx >= len(self.waypoints):
                 self.get_logger().info(" Reached final waypoint")
                 self.publish_zero_velocity()
                 return
             target_x, target_y = self.waypoints[self.current_waypoint_idx]
+            dist = math.hypot(target_x - self.current_x, target_y - self.current_y)
         
-        # Compute forces
-        f_att = self.attractive_force(target_x, target_y)
+        lookahead_weights = [1.0, 0.5, 0.25]
+        f_att = (0.0, 0.0)
+
+        for i, w in enumerate(lookahead_weights):
+            idx = self.current_waypoint_idx + i
+            if idx >= len(self.waypoints):
+                break
+            wp_x, wp_y = self.waypoints[idx]
+            fa = self.attractive_force(wp_x, wp_y)
+            f_att = (f_att[0] + w * fa[0], f_att[1] + w * fa[1])
+        
         f_rep = self.repulsive_force()
         f_rep_drone = self.repulsive_force_other_drone()
-        # Combine
+
         fx = f_att[0] + f_rep[0] + f_rep_drone[0]
         fy = f_att[1] + f_rep[1] + f_rep_drone[1]
-
-        desired_yaw = math.atan2(fy, fx)
-        yaw_error = self.normalize_angle(desired_yaw - self.current_yaw)
-
-        vx, vy, yaw_rate = 0.0, 0.0, 0.0
         
-        ENTER_FORWARD_THRESHOLD = math.radians(20.0)   # Start moving once within 20°
-        EXIT_FORWARD_THRESHOLD  = math.radians(45.0)
-        MAX_YAW_RATE = 1.0  # rad/s cap to prevent oscillation
-        
-        if self.motion_state == "ALIGNING":
-            if abs(yaw_error) < ENTER_FORWARD_THRESHOLD:
-                self.motion_state = "FORWARD"
-        elif self.motion_state == "FORWARD":
-            if abs(yaw_error) > EXIT_FORWARD_THRESHOLD:
-                self.motion_state = "ALIGNING"
+        self._last_apf_forces = {
+            "att":       f_att,
+            "rep_obs":   f_rep,
+            "rep_drone": f_rep_drone,
+            "total":     (fx, fy),
+        }
 
-        if self.motion_state == "ALIGNING":
-            vx = 0.0
-            vy = 0.0
-            # Cap yaw rate to avoid overshoot
-            yaw_rate = max(-MAX_YAW_RATE, min(MAX_YAW_RATE,
-                        self.alignment_yaw_gain * yaw_error))
-            self.get_logger().info(
-                f"ALIGNING: yaw_error={math.degrees(yaw_error):.1f}°",
-                throttle_duration_sec=1.0)
+        force_mag = math.hypot(fx, fy)
+        if force_mag < 0.15 and dist > self.wp_threshold:
+            self.local_min_count += 1
         else:
-            # FORWARD: move and maintain heading
-            speed = min(math.hypot(fx, fy), self.max_speed)
-            vx = speed * math.cos(self.current_yaw)
-            vy = speed * math.sin(self.current_yaw)
-            yaw_rate = max(-MAX_YAW_RATE * 0.5, min(MAX_YAW_RATE * 0.5,
-                        self.forward_yaw_gain * yaw_error))
+            self.local_min_count = max(0, self.local_min_count - 1)
+        
+        if self.local_min_count >= self.local_min_threshold:
+            self.local_min_count = 0
+            self.escape_cycles_remaining = 8
+            att_angle = math.atan2(f_att[1], f_att[0])
+            perp = att_angle + random.choice([math.pi / 2, -math.pi / 2])
+            self.escape_vec = (
+                self.k_att * math.cos(perp),
+                self.k_att * math.sin(perp),
+            )
+            self.get_logger().warn("Local minimum detected — injecting escape perturbation")
+        
+        if self.escape_cycles_remaining > 0:
+            self.escape_cycles_remaining -= 1
+            fx += self.escape_vec[0]
+            fy += self.escape_vec[1]
+            force_mag = math.hypot(fx, fy)
 
-        # 5. Final Stuck Check / Safety
+        if force_mag < 1e-4:
+            self.publish_zero_velocity()
+            return
+        
+        force_mag = math.hypot(fx, fy)
+        desired_speed = self.max_speed * math.tanh(force_mag / self.k_att)
+
+        alpha = math.atan2(fy, fx)
+        yaw = self.current_yaw
+
+        vx_body =  (math.cos(yaw) * fx/force_mag + math.sin(yaw) * fy/force_mag)*desired_speed
+        vy_body = (-math.sin(yaw) * fx/force_mag + math.cos(yaw) * fy/force_mag)*desired_speed
+        
+        yaw_error = self.normalize_angle(alpha - self.current_yaw)
+
+        MAX_YAW_RATE = 1.0  
+        yaw_rate = max(-MAX_YAW_RATE, min(MAX_YAW_RATE, self.alignment_yaw_gain * yaw_error))
+
+        vx_body *= max(0.0, math.cos(yaw_error))
+
         if self.check_if_stuck():
-            if self.motion_state == "ALIGNING":
-                self.last_stuck_check_time = self.get_clock().now()
-                self.last_position = (self.current_x, self.current_y)
-                return False
-            
-            self.get_logger().warn("Robot stuck! Clearing waypoints to force replan.")
+            self.get_logger().warn("Stuck — clearing waypoints to force replan")
             self.waypoints = []
             self.publish_zero_velocity()
             return
         
-        self.publish_velocity(vx, vy, yaw_rate)
+        self._publish_apf_viz()   
+        self.publish_velocity(vx_body, vy_body, yaw_rate)
     
     def check_if_stuck(self):
         """Detect if robot is stuck (not making progress)"""
         current_time = self.get_clock().now()
-        
+        if self._last_replan_time is not None:
+            elapsed = (self.get_clock().now() - self._last_replan_time).nanoseconds / 1e9
+            if elapsed < 3.0:
+                return False
         # Initialize on first call
         if self.last_stuck_check_time is None:
             self.last_stuck_check_time = current_time
@@ -717,62 +889,98 @@ class AutonomousExplorer(Node):
                 return True
         
         return False
+    
     def attractive_force(self, target_x, target_y):
         """Pull toward target waypoint"""
+        d_switch = 1.5
+
         dx = target_x - self.current_x
         dy = target_y - self.current_y
         dist = math.hypot(dx, dy)
         
-        if dist < 0.01:
+        if dist < 0.001:
             return (0.0, 0.0)
         
-        fx = self.k_att * (dx / dist)
-        fy = self.k_att * (dy / dist)
+        d_hat_x = dx / dist
+        d_hat_y = dy / dist
+        
+        if dist <= d_switch:
+            fx = self.k_att * dx
+            fy = self.k_att * dy
+        else:
+            fx = self.k_att * d_switch * d_hat_x
+            fy = self.k_att * d_switch * d_hat_y
         return (fx, fy)
     
     def repulsive_force(self):
         """Push away from obstacles"""
-        fx_total, fy_total = 0.0, 0.0
+
+        if self.distance_field is None:
+            return (0.0,0.0)
         
-        cells = self.get_nearby_cells(self.influence_radius)
+        d0 = self.influence_radius
+        d_min = 0.05
+        gx, gy = self.world_to_grid(self.current_x, self.current_y)
+        if gx is None:
+            return (0.0,0.0)
         
-        for (gx, gy) in cells:
-            if self.inflated_map[gy, gx] >= 50:
-                wx, wy = self.grid_to_world(gx, gy)
-                
-                dx = self.current_x - wx
-                dy = self.current_y - wy
-                dist = math.hypot(dx, dy)
-                
-                if dist < 0.01:
-                    dist = 0.01
-                
-                if dist < self.influence_radius:
-                    magnitude = self.k_rep * (1.0/dist - 1.0/self.influence_radius) / (dist**2)
-                    fx_total += magnitude * (dx / dist)
-                    fy_total += magnitude * (dy / dist)
+        d = float(self.distance_field[gy, gx])
+        d = max(d, d_min)
+
+        if d>= d0:
+            return (0.0,0.0)
         
-        return (fx_total, fy_total)
+        scalar = self.k_rep * (1.0/d -1.0/d0) / (d **2)
+
+        h = self.map_info.resolution
+        H, W = self.distance_field.shape
+
+        def _d(r, c):
+            r = max(0, min(H - 1, r))
+            c = max(0, min(W - 1, c))
+            return float(self.distance_field[r, c])
+        
+        grad_x = (_d(gy, gx + 1) - _d(gy, gx - 1)) / (2 * h)
+        grad_y = (_d(gy + 1, gx) - _d(gy - 1, gx)) / (2 * h)
+
+        grad_mag = math.hypot(grad_x, grad_y)
+        if grad_mag < 1e-6:
+            # no repulsion needed
+            return (0.0, 0.0)
+
+        # Force = scalar * gradientd  
+        fx = scalar * (grad_x / grad_mag)
+        fy = scalar * (grad_y / grad_mag)
+
+        return(fx, fy)
+
     
     def repulsive_force_other_drone(self):
+
         if self.other_drone_x is None or self.other_drone_y is None:
             return (0.0, 0.0)
-
+        
         dx = self.current_x - self.other_drone_x
         dy = self.current_y - self.other_drone_y
-        dist = max(math.hypot(dx, dy), 0.01)
-
+        dist = max(math.hypot(dx, dy), 0.05)
+        
         if dist >= self.other_drone_safety_radius:
             return (0.0, 0.0)
-
-        mag = (
-            self.k_rep_drone
-            * (1.0 / dist - 1.0 / self.other_drone_safety_radius)
-            / (dist ** 2)
-        )
-        fx = mag * (dx / dist)
-        fy = mag * (dy / dist)
-
+        
+        d0 = self.other_drone_safety_radius
+        scalar = self.k_rep_drone * (1.0 / dist - 1.0 / d0) / (dist ** 2)
+        
+        fx = scalar * (dx / dist)
+        fy = scalar * (dy / dist)
+        
+        cap = max(math.hypot(*self.attractive_force(
+            self.goal_x or self.current_x,
+            self.goal_y or self.current_y)) * 2.0, 5.0)
+        
+        mag = math.hypot(fx, fy)
+        if mag > cap:
+            fx = fx / mag * cap
+            fy = fy / mag * cap
         self.get_logger().warn(
             f"[DRONE PROXIMITY] dist={dist:.2f} m  repulsion=({fx:.2f}, {fy:.2f})",
             throttle_duration_sec=1.0,
@@ -789,8 +997,8 @@ class AutonomousExplorer(Node):
             centroid_y = sum(p[1] for p in cluster) / len(cluster)
             
             is_best = (best_frontier and 
-                      abs(centroid_x - best_frontier[0]) < 0.1 and 
-                      abs(centroid_y - best_frontier[1]) < 0.1)
+                    abs(centroid_x - best_frontier[0]) < 0.1 and 
+                    abs(centroid_y - best_frontier[1]) < 0.1)
             
             marker = Marker()
             marker.header.frame_id = "map"
@@ -879,17 +1087,73 @@ class AutonomousExplorer(Node):
     
     def publish_path_viz(self, path):
         msg = Path()
-        msg.header.frame_id = "map"
+        msg.header.frame_id = self.map_frame
         msg.header.stamp = self.get_clock().now().to_msg()
+        
+        waypoints_msg = PoseArray()
+        waypoints_msg.header.frame_id = self.map_frame
+        waypoints_msg.header.stamp = msg.header.stamp
         
         for (x, y) in path:
             p = PoseStamped()
             p.pose.position.x = x
             p.pose.position.y = y
-            p.pose.position.z = 2.0
+            p.pose.position.z = 0.0
             msg.poses.append(p)
+
+            pose = Pose()
+            pose.position.x = x
+            pose.position.y = y
+            pose.position.z = 0.0
+            waypoints_msg.poses.append(pose)
         
         self.path_pub.publish(msg)
+        self.waypoints_pub.publish(waypoints_msg)
+    
+    def _publish_apf_viz(self):
+        VIZ_SCALE = 0.5
+        stamp = self.get_clock().now().to_msg()
+        markers = MarkerArray()
+
+        force_list = [
+            (0, "att",       0.1, 0.9, 0.1),
+            (1, "rep_obs",   0.9, 0.1, 0.1),
+            (2, "rep_drone", 1.0, 0.5, 0.0),
+            (3, "total",     1.0, 1.0, 1.0),
+        ]
+
+        for mid, key, r, g, b in force_list:
+            dx, dy = self._last_apf_forces[key]
+            mag = math.hypot(dx, dy)
+            if mag < 1e-4:
+                continue
+
+            m = Marker()
+            m.header.frame_id = self.map_frame
+            m.header.stamp    = stamp
+            m.ns              = "apf_forces"
+            m.id              = mid
+            m.type            = Marker.ARROW
+            m.action          = Marker.ADD
+            m.lifetime.nanosec = int(0.5e9)
+
+            tail = Point(x=self.current_x, y=self.current_y, z=0.05)
+            tip  = Point(
+                x=self.current_x + (dx / mag) * mag * VIZ_SCALE,
+                y=self.current_y + (dy / mag) * mag * VIZ_SCALE,
+                z=0.05
+            )
+            m.points  = [tail, tip]
+            m.scale.x = 0.05
+            m.scale.y = 0.12
+            m.scale.z = 0.0
+            m.color.r = r
+            m.color.g = g
+            m.color.b = b
+            m.color.a = 1.0
+            markers.markers.append(m)
+
+        self.apf_markers_pub.publish(markers)
 
 def main():
     rclpy.init()
