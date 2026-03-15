@@ -43,48 +43,36 @@ import os
 
 
 def generate_launch_description():
-    package_dir = get_package_share_directory('drone_slam_pkg')
+    package_dir = get_package_share_directory('drone_control_pkg')
     # bash_script_path = os.path.join(package_dir, 'scripts', 'TerminatorScript.sh')
     return LaunchDescription([
 
         Node(
-            package='drone_slam_pkg',
-            namespace='px4_offboard',
+            package='drone_control_pkg',
+            namespace='x500_drone_0',
             executable='control',
             name='control',
             prefix='gnome-terminal --',
         ),
         Node(
-            package='drone_slam_pkg',
-            namespace='px4_offboard',
+            package='drone_control_pkg',
+            namespace='x500_drone_0',
             executable='velocity_control',
             name='velocity'
         ),
         Node(
-            package='drone_slam_pkg',
-            namespace='px4_offboard',
+            package='drone_control_pkg',
+            namespace='x500_drone_1',
             executable='control1',
             name='control1',
             prefix='gnome-terminal --',
         ),
         Node(
-            package='drone_slam_pkg',
-            namespace='px4_offboard',
+            package='drone_control_pkg',
+            namespace='x500_drone_1',
             executable='velocity_control1',
             name='velocity1'
         ),
-        # Node(
-        #     package='px4_offboard',
-        #     # namespace=namespace,
-        #     executable='offboard_control',
-        #     name='control',
-        #     parameters= [
-        #         {'radius': 10.0},
-        #         {'altitude': 5.0},
-        #         {'omega': 0.5},
-        #         # {'namespace': namespace}
-        #     ]
-        # ),
         # # Node(
         #     package='rviz2',
         #     namespace='',
