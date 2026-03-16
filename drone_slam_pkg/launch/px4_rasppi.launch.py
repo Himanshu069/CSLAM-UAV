@@ -50,7 +50,7 @@ def generate_launch_description():
             'Grid/MaxObstacleHeight': '1.75',
             'RGBD/StartAtOrigin': 'true',
             # 'Grid/GroundIsObstacle': 'false',
-            # 'Grid/RayTracing': True,
+            'Grid/RayTracing': 'true',
 
             # 'Grid/MaxGroundHeight': '0.2',   # indoor
             # 'Grid/MinGroundHeight': '-0.2',
@@ -84,32 +84,16 @@ def generate_launch_description():
                 {'vehicle_ns': 'x500_drone_0'}
             ],
         ),
-        # ExecuteProcess(
-        #    cmd=[
-        #        'ros2', 'run', 'depthai_ros_driver', 'camera_node',
-        #        '--ros-args',
-        #        '--params-file', yaml_file,
-        #        '-r', '/camera/rgb/camera_info:=/x500_drone_0/rgb/camera_info',
-        #        '-r', '/camera/rgb/image_raw:=/x500_drone_0/rgb/image',
-        #        '-r', '/camera/stereo/image_raw:=/x500_drone_0/depth/image'
-        #    ],
-        #    output='screen',
-       # ),
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource([
                 os.path.join(get_package_share_directory('realsense2_camera'), 'launch', 'rs_launch.py')
-            ]),
+           ]),
             launch_arguments={
                 'align_depth.enable': 'true',       
                 'pointcloud.enable': 'false',       
                 'depth_module.profile': '640x480x15', 
                 'rgb_camera.profile': '640x480x15'
             }.items()
-         #   remappings=[
-         #       ('/camera/camera/aligned_depth_to_color/camera_info','/x500_drone_0/rgb/camera_info'),
-         #       ('/camera/camera/aligned_depth_to_color/image_raw','/x500_drone_0/depth/image'),
-         #       ('/camera/camera/color/image_raw','/x500_drone_0/rgb/image'),
-         #       ]
         ),
         Node(
             package='topic_tools',
@@ -140,9 +124,9 @@ def generate_launch_description():
                 '/x500_drone_0/rgb/image'
         ],
         output='screen'
-        ),
+       ),
 
-       # Node(
+        #Node(
         #    package='depthai_ros_driver',
         #    executable='camera_node',
         #    name='oak',
@@ -153,46 +137,33 @@ def generate_launch_description():
         #        ('/camera/rgb/image_raw','/x500_drone_0/rgb/image'),
         #        ('/camera/stereo/image_raw','/x500_drone_0/depth/image'),
         #    ]
-      #  ),
+        #),
 
         #Drone 0
         Node(package='tf2_ros', executable='static_transform_publisher',
                 arguments=['0', '0', '0', '0', '0', '0', 'x500_drone_0/base_link', 'x500_depth_0/base_link/imu_sensor']),
         
         Node(package='tf2_ros', executable='static_transform_publisher',
-                arguments=['0.12', '0.03', '0.242', '0', '1.570796327', '0', 'x500_drone_0/base_link', 'camera_link']),
-       
-      #for OAK-D-PRO_W
-    #     Node(package='tf2_ros', executable='static_transform_publisher',
-    #  arguments=['0', '0', '0', '0', '0', '0',
-    #             'x500_drone_0/camera_link',
-    #             'camera_rgb_camera_optical_frame']),
-
-        Node(package='tf2_ros', executable='static_transform_publisher',
-                arguments=['0.0123', '-0.03', '0.01878', '0', '0', '0', 'camera_link', 'camera_link/IMX214']),
-        
-        Node(package='tf2_ros', executable='static_transform_publisher',
-                arguments=['0.01233', '-0.03', '0.01878', '0', '0', '0', 'camera_link', 'x500_drone_0/camera_link/StereoOV7251']),
-
-        
+                arguments=['0.12', '0.03', '0.242', '0', '1.570796327', '0', 'x500_drone_0/base_link', 'x500_drone_0/camera_link']),
+             
         #Drone 0
-       # Node(
-       #     package='imu_filter_madgwick',
-       #     executable='imu_filter_madgwick_node',
-       #     name='imul_filter_0',
-       #     namespace='x500_drone_0',
-       #     output='screen',
-       #     parameters=[{
-       #         'use_mag': False,
-       #         'world_frame': 'enu',
-       #         'publish_tf': False,
-       #         'use_sim_time': False,
-       #     }],
-       #     remappings=[
-       #         ('imu/data_raw', '/x500_drone_0/imu/data_raw'),
-       #         ('imu/data',     '/x500_drone_0/imu/data'),
-       #     ]
-       # ),
+        Node(
+            package='imu_filter_madgwick',
+            executable='imu_filter_madgwick_node',
+            name='imul_filter_0',
+            namespace='x500_drone_0',
+            output='screen',
+            parameters=[{
+                'use_mag': False,
+                'world_frame': 'enu',
+                'publish_tf': False,
+                'use_sim_time': False,
+            }],
+            remappings=[
+                ('imu/data_raw', '/x500_drone_0/imu/data_raw'),
+                ('imu/data',     '/x500_drone_0/imu/data'),
+            ]
+        ),
         Node(
             package='rtabmap_util',
             executable='imu_to_tf',
@@ -216,7 +187,7 @@ def generate_launch_description():
             output="screen",
             parameters=[{
                 "use_sim_time": False,
-                "approx_sync": False,
+                "approx_sync": True,
                 "approx_sync_max_interval": 0.04,
                 "queue_size": 200,
                 "sync_queue_size": 100,
@@ -296,33 +267,8 @@ def generate_launch_description():
                 {"repeat_odom": True}      
             ],
             output='screen'
-        ),
-        Node(
-            package='drone_slam_pkg',
-            executable='exploration_planner',
-            name='exploration_planner_0',
-            namespace='x500_drone_0',
-            output='screen',
-            remappings = [
-                ("map","/x500_drone_0/map"),
-                ("fmu/out/vehicle_local_position","/fmu/out/vehicle_local_position"),
-            ]
-        ),
-        Node(
-            package='px4_ros_com',
-            executable='offboard_cmd_vel',
-            name='drone_0_control',
-            namespace='x500_drone_0',
-            output='screen',
-            parameters =[
-                {"use_sim_time": False}
-            ],
-            remappings=[
-                ("/cmd_vel","/x500_drone_0/cmd_vel"), 
-            ]
-        ),
-                # Node(
-                #     package='drone_slam_pkg',
+            )
+            #     package='drone_slam_pkg',
                 #     executable='offboard_control',
                 #     name='drone_0_control',
                 #     namespace='x500_drone_0',
