@@ -15,52 +15,40 @@ def generate_launch_description():
 
     def get_vslam_params(drone_ns, db_name):
         return {
-            'use_sim_time': False,
+           'use_sim_time': False,
             'frame_id': f'{drone_ns}/base_link',
             'guess_frame_id':f'{drone_ns}/base_link_stabilized',
             'map_frame_id': f'{drone_ns}/map',
             'odom_frame_id': f'{drone_ns}/odom',
             
-            # 'subscribe_rgbd': True,
-            'subscribe_depth': True,
-            'subscribe_odom_info':True,
-            'wait_for_transform': 0.5,
-            # 'tf_delay': 0.1,
-            # 'tf_tolerance': 0.5,
-            # 'subscribe_imu': True,
-            'approx_sync': True, 
-            'wait_imu_to_init': False,
-            # 'publish_tf': True,
-            # 'queue_size': 200,
-            # 'sync_queue_size': 100,
-            
-            # 'Odom/ResetCountdown': '5',     
-            # 'Vis/MinInliers': '10',         
-            # 'Odom/Strategy': '0',           
-            # 'wait_for_transform': 0.5,
-            # 'Optimizer/GravitySigma': '0.3',
 
+            'subscribe_rgbd': True,
+            'subscribe_depth': False,
+            'subscribe_odom': True,
+            'subscribe_imu': True,
+            'approx_sync': False,
+            'queue_size': 200,
+            'sync_queue_size': 100,
+
+            'Odom/ResetCountdown': '1',     
+            'Vis/MinInliers': '15',         
+            'Odom/Strategy': '0',           
+            'wait_for_transform': 0.2,
             'Optimizer/GravitySigma': '0.1',
-            'Vis/FeatureType': '6',
-            'Kp/DetectorStrategy': '6',
+            'wait_imu_to_init': True,
+            'publish_tf': True,
+            # 'Vis/FeatureType': '10',
+            # 'Kp/DetectorStrategy': '10',
+
+            'Grid/RayTracing' : 'true',
+            'Grid/MinGroundHeight': '-0.1',
             'Grid/MapFrameProjection': 'true',
             'NormalsSegmentation': 'false',
-            # 'Grid/MinGroundHeight': '-0.2',
-            'Grid/MaxGroundHeight': '1.15' ,
+            'Grid/MaxGroundHeight': '1.15', 
             'Grid/MaxObstacleHeight': '1.75',
-            'RGBD/StartAtOrigin': 'true',
-            # 'Grid/GroundIsObstacle': 'false',
-            'Grid/RayTracing': 'true',
-
-            # 'Grid/MaxGroundHeight': '0.2',   # indoor
-            # 'Grid/MinGroundHeight': '-0.2',
-            # 'Grid/MinObstacleHeight': '2.0',
-
-            # 'Grid/3D': True,
-            # 'Grid/MaxGroundHeight': '0.1', 
-            # 'Grid/MaxObstacleHeight': '2.1',
-            # 'Grid/NoiseFilteringRadius': '0.05',
-            # 'Grid/NoiseFilteringMinNeighbors': '2',
+            'Grid/NoiseFilteringRadius': '0.1',
+            'Grid/NoiseFilteringMinNeighbors': '5',
+            
             
             'database_path': f'~/.ros/{db_name}.db'
         }
@@ -187,7 +175,7 @@ def generate_launch_description():
             output="screen",
             parameters=[{
                 "use_sim_time": False,
-                "approx_sync": True,
+                "approx_sync": False,
                 "approx_sync_max_interval": 0.04,
                 "queue_size": 200,
                 "sync_queue_size": 100,
@@ -208,6 +196,7 @@ def generate_launch_description():
             remappings=[
                 ("imu", "/x500_drone_0/imu/data"),
                 ("map", "/x500_drone_0/map"),
+                ("odom", "/x500_drone_0/odom"),  
             ],
         ),
         Node(
@@ -263,7 +252,7 @@ def generate_launch_description():
             parameters=[
                 {"odom_topic": "/x500_drone_0/odom"},
                 {"vehicle_odometry_topic": "/fmu/in/vehicle_visual_odometry"},
-                {"map_frame_id": "/x500_drone_0/map"},   
+                {"map_frame_id": "x500_drone_0/map"},   
                 {"repeat_odom": True}      
             ],
             output='screen'
