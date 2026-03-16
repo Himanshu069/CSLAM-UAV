@@ -18,7 +18,7 @@ def generate_launch_description():
             namespace='x500_drone_0',
             output='screen',
             parameters =[
-                {"use_sim_time": True}
+                {"use_sim_time": False}
             ],
             remappings=[
                 ("/cmd_vel","/x500_drone_0/cmd_vel"), 
