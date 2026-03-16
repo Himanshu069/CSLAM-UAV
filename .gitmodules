@@ -21,4 +21,4 @@
 [submodule "PX4_ROS_BRIDGE"]
 	path = PX4_ROS_BRIDGE
 	url = https://github.com/Himanshu069/PX4_ROS_BRIDGE.git
-	branch = main
+	branch = rasppi
