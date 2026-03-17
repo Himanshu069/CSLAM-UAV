@@ -34,6 +34,8 @@ setup(
                         'control1 = drone_slam_pkg.control1:main',
                         'velocity_control = drone_slam_pkg.velocity_control:main',
                         'velocity_control1 = drone_slam_pkg.velocity_control1:main',
+                        'logger_exploration_planner = drone_slam_pkg.logger_exploration_planner:main'
+
 
             ],
         },
