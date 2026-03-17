@@ -7,7 +7,6 @@ import os
 
 
 def generate_launch_description():
-    package_dir = get_package_share_directory('drone_control_pkg')
     # bash_script_path = os.path.join(package_dir, 'scripts', 'TerminatorScript.sh')
     return LaunchDescription([
 
@@ -20,10 +19,10 @@ def generate_launch_description():
             parameters = [
                 {
                     "drone_radius": 0.26,
-                    "other_drone_pose_topic": '/x500_drone_1/localization_pose',
+                    # "other_drone_pose_topic": '/x500_drone_1/localization_pose',
                     "other_drone_safety_radius": 3,
-                    "other_drone_init_x": 2.0 ,
-                    "other_drone_init_y": 0.0,
+                    # "other_drone_init_x": 2.0 ,
+                    # "other_drone_init_y": 0.0,
                     'map_frame': '/x500_drone_0/map'
                 }
             ],
@@ -35,17 +34,17 @@ def generate_launch_description():
             ]
         ),
         Node(
-            package='px4_ros_com',
-            executable='offboard_cmd_vel',
-            name='drone_0_control',
+            package='drone_slam_pkg',
+            executable='logger_exploration_planner',
+            name='exploration_logger_0',
             namespace='x500_drone_0',
             output='screen',
-            parameters =[
-                {"use_sim_time": True}
+            parameters=[
+                {
+                    "log_dir": os.path.expanduser("~/exploration_logs"),
+                    "drone_namespace": "x500_drone_0",
+                }
             ],
-            remappings=[
-                ("/cmd_vel","/x500_drone_0/cmd_vel"), 
-            ]
         ),
         # # Node(
         #     package='rviz2',

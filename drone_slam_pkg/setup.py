@@ -29,7 +29,8 @@ setup(
                         'odom_drone_tf = drone_slam_pkg.odom_drone_tf:main',
                         'offboard_control = drone_slam_pkg.offboard_control:main',
                         'exploration_planner = drone_slam_pkg.exploration_planner:main',
-                        'offboard_radius = drone_slam_pkg.offboard_radius:main'
+                        'offboard_radius = drone_slam_pkg.offboard_radius:main',
+                        'logger_exploration_planner = drone_slam_pkg.logger_exploration_planner:main'
 
             ],
         },
