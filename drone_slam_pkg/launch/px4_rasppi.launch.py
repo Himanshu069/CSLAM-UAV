@@ -35,7 +35,7 @@ def generate_launch_description():
             'Odom/Strategy': '0',           
             'wait_for_transform': 0.2,
             'Optimizer/GravitySigma': '0.1',
-            'wait_imu_to_init': False,
+            'wait_imu_to_init': True,
             'publish_tf': True,
             # 'Vis/FeatureType': '10',
             # 'Kp/DetectorStrategy': '10',
@@ -129,17 +129,16 @@ def generate_launch_description():
 
         #Drone 0
         Node(package='tf2_ros', executable='static_transform_publisher',
-                arguments=['0', '0', '0', '0', '0', '0', 'x500_drone_0/base_link', 'x500_depth_0/base_link/imu_sensor']),
+                arguments=['0', '0', '0', '0', '0', '0', 'x500_drone_0/base_link', 'x500_drone_0/base_link/imu_sensor']),
         
         Node(package='tf2_ros', executable='static_transform_publisher',
-                arguments=['0.12', '0.03', '0.242', '0', '1.570796327', '0', 'x500_drone_0/base_link', 'camera_link']),
+                arguments=['0.12', '0.03', '0.242', '0', '0', '0', 'x500_drone_0/base_link', 'camera_link']),
              
         #Drone 0
         Node(
             package='imu_filter_madgwick',
             executable='imu_filter_madgwick_node',
             name='imul_filter_0',
-            namespace='x500_drone_0',
             output='screen',
             parameters=[{
                 'use_mag': False,
@@ -156,7 +155,6 @@ def generate_launch_description():
             package='rtabmap_util',
             executable='imu_to_tf',
             name='imu_to_tf_0',
-            namespace='x500_drone_0',
             output='screen',
             parameters=[{
                 'use_sim_time': False,
@@ -164,7 +162,7 @@ def generate_launch_description():
                 'base_frame_id': 'x500_drone_0/base_link',
             }],
             remappings=[
-                ('imu', '/x500_drone_0/imu/data'),
+                ('imu/data', '/x500_drone_0/imu/data'),
             ]
         ),
         Node(
