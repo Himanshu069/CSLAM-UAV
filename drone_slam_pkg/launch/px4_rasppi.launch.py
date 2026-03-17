@@ -35,7 +35,7 @@ def generate_launch_description():
             'Odom/Strategy': '0',           
             'wait_for_transform': 0.2,
             'Optimizer/GravitySigma': '0.1',
-            'wait_imu_to_init': True,
+            'wait_imu_to_init': False,
             'publish_tf': True,
             # 'Vis/FeatureType': '10',
             # 'Kp/DetectorStrategy': '10',
@@ -132,7 +132,7 @@ def generate_launch_description():
                 arguments=['0', '0', '0', '0', '0', '0', 'x500_drone_0/base_link', 'x500_depth_0/base_link/imu_sensor']),
         
         Node(package='tf2_ros', executable='static_transform_publisher',
-                arguments=['0.12', '0.03', '0.242', '0', '1.570796327', '0', 'x500_drone_0/base_link', 'x500_drone_0/camera_link']),
+                arguments=['0.12', '0.03', '0.242', '0', '1.570796327', '0', 'x500_drone_0/base_link', 'camera_link']),
              
         #Drone 0
         Node(
