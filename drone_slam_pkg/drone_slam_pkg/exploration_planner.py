@@ -3,6 +3,7 @@
 FULL AUTONOMOUS EXPLORATION SYSTEM
 - Frontier Detection: Finds unexplored areas
 - RRT* Global Planner: Avoids local minima
+- CBF based safety filter
 - Potential Field Local Controller: Smooth reactive motion
 
 """
@@ -11,7 +12,7 @@ from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy, DurabilityPolicy
 from nav_msgs.msg import OccupancyGrid, Path
 from geometry_msgs.msg import PoseStamped, Twist, PoseWithCovarianceStamped, PoseArray, Pose, Point
-from px4_msgs.msg import VehicleLocalPosition, VehicleAttitude, DistanceSensor
+from px4_msgs.msg import VehicleLocalPosition, VehicleAttitude
 from visualization_msgs.msg import Marker, MarkerArray
 from std_msgs.msg import ColorRGBA, Float32, Int32, Bool
 from scipy.ndimage import binary_dilation
@@ -20,7 +21,319 @@ import time
 import math
 import random
 from scipy import ndimage
-from collections import deque
+from dataclasses import dataclass
+from typing import Optional
+
+@dataclass
+class CBFConstraint:
+    """One linear CBF constraint: g^T u >= b"""
+    g: np.ndarray   # gradient of SDF (unit vector by Eikonal)
+    h: float        # barrier value  h_i(x) = tanh(a*(phi-d))
+    b: float        # RHS = -(gamma/2a)*sinh(2a*(phi-d))
+    label: str = ""
+ 
+@dataclass
+class CBFResult:
+    u_safe:        np.ndarray
+    u_des:         np.ndarray
+    h1:            float          # obstacle barrier value in (-1, 1)
+    h2:            float          # frontier barrier value in (-1, 1)
+    phi1:          float          # raw SDF distance to obstacle (m)
+    phi2:          float          # raw SDF distance to frontier (m)
+    slack:         float          # ||u_safe - u_des|| (m/s)
+    cbf1_active:   bool           # obstacle constraint fired
+    cbf2_active:   bool           # frontier constraint fired
+    speed_clipped: bool           # v_max clipped the result
+    qp_infeasible: bool           # soft-CBF fallback was used
+    delta:         float          # soft-CBF slack magnitude
+ 
+ 
+def build_sdf_obstacle(map_data: np.ndarray, resolution: float) -> np.ndarray:
+    """
+    Signed Distance Function to obstacles.
+      phi > 0  free space (distance to nearest obstacle surface)
+      phi < 0  inside obstacle
+      phi = 0  on obstacle surface
+    Satisfies Eikonal ||grad phi|| = 1 a.e. (Rademacher's theorem).
+    """
+    obstacle_mask = (map_data >= 50)
+    d_out = ndimage.distance_transform_edt(~obstacle_mask) * resolution
+    d_in  = ndimage.distance_transform_edt( obstacle_mask) * resolution
+    return np.where(obstacle_mask, -d_in, d_out)
+
+def build_sdf_frontier(map_data: np.ndarray,
+                        resolution: float,
+                        min_cluster_cells: int = 5) -> Optional[np.ndarray]:
+    """
+    Signed Distance Function to significant unknown-cell clusters.
+ 
+    Filters SLAM noise by keeping only connected unknown regions
+    with area >= min_cluster_cells (8-connectivity).
+ 
+    Returns None when no significant frontier exists (map fully explored).
+    The returned field satisfies the Eikonal equation a.e., so the same
+    T(.) smoothing proof (Raja et al. 2024, Lemma 1) applies as Lemma 2.
+    """
+    unknown_mask = (map_data == -1)
+    if not unknown_mask.any():
+        return None
+ 
+    struct = ndimage.generate_binary_structure(2, 2)   # 8-connected
+    labeled, n = ndimage.label(unknown_mask, structure=struct)
+ 
+    filtered = np.zeros_like(unknown_mask, dtype=bool)
+    for lid in range(1, n + 1):
+        if np.sum(labeled == lid) >= min_cluster_cells:
+            filtered |= (labeled == lid)
+ 
+    if not filtered.any():
+        return None
+ 
+    d_out = ndimage.distance_transform_edt(~filtered) * resolution
+    d_in  = ndimage.distance_transform_edt( filtered) * resolution
+    return np.where(filtered, -d_in, d_out)
+
+class TanhDualCBF:
+    def __init__(self,
+                d_safe:           float = 0.35,
+                d_stop:           float = 0.50,
+                a1:               float = 2.0,
+                a2:               float = 1.5,
+                gamma1:           float = 1.5,
+                gamma2:           float = 1.0,
+                v_max:            float = 0.20,
+                min_cluster_cells: int  = 25):
+        self.d_safe            = d_safe
+        self.d_stop            = d_stop
+        self.a1                = a1
+        self.a2                = a2
+        self.gamma1            = gamma1
+        self.gamma2            = gamma2
+        self.v_max             = v_max
+        self.min_cluster_cells = min_cluster_cells
+
+    def _h(self, phi: float, d: float, a: float) -> float:
+        """h = tanh(a*(phi-d))  in (-1, 1)"""
+        return math.tanh(a * (phi - d))
+    
+    def _b(self, phi: float, d: float, a: float, gamma: float) -> float:
+        #b in inequality
+        s = a * (phi - d)
+        return -(gamma / (2.0 * a)) * math.sinh(2.0 * s)
+
+    def _grad(self, sdf: np.ndarray,
+            gx: int, gy: int,
+            res: float) -> np.ndarray:
+        H, W = sdf.shape
+        def v(r, c):
+            return float(sdf[max(0, min(H-1, r)), max(0, min(W-1, c))])
+        gx_ = (v(gy, gx+1) - v(gy, gx-1)) / (2.0 * res)
+        gy_ = (v(gy+1, gx) - v(gy-1, gx)) / (2.0 * res)
+        g   = np.array([gx_, gy_])
+        if np.linalg.norm(g) < 1e-8:
+            return np.array([0.0, 0.0])   # flat SDF region, _project_single handles via g_sq < 1e-10
+        return g    
+     
+    def _make_constraint(self, sdf, gx, gy, res, d, a, gamma, label):
+        phi = float(sdf[gy, gx])
+        return CBFConstraint(
+            g     = self._grad(sdf, gx, gy, res),
+            h     = self._h(phi, d, a),
+            b     = self._b(phi, d, a, gamma),
+            label = label,
+        )
+    
+    def _project_single(self,
+                         u: np.ndarray,
+                         c: CBFConstraint):
+        """
+        Closed-form projection onto halfspace g^T u >= b.
+ 
+        u* = u_des + lambda * g
+        lambda* = (b - g^T u) / ||g||^2    (only when constraint violated)
+ 
+        Returns (u*, lambda*)
+        """
+        gTu = float(c.g @ u)
+        if gTu >= c.b:
+            return u.copy(), 0.0
+        g_sq = float(c.g @ c.g)
+        if g_sq < 1e-10:
+            return u.copy(), 0.0
+        lam = (c.b - gTu) / g_sq
+        return u + lam * c.g, lam
+    
+    def _project_dual(self,
+                       u_des: np.ndarray,
+                       c1: CBFConstraint,
+                       c2: CBFConstraint):
+        """
+        Closed-form projection onto intersection of two halfspaces.
+ 
+            min  0.5*||u - u_des||^2
+            s.t. g1^T u >= b1
+                 g2^T u >= b2
+ 
+        Four cases via KKT active-set enumeration.
+ 
+        Case 4 (both active) closed form:
+            [g1.g1  g1.g2] [l1]   [b1 - g1.u_des]
+            [g2.g1  g2.g2] [l2] = [b2 - g2.u_des]
+ 
+        det = ||g1||^2*||g2||^2 - (g1.g2)^2 = sin^2(theta)*||g1||^2*||g2||^2
+        Zero iff g1 || g2 (obstacle and frontier in same direction).
+ 
+        Returns (u*, qp_infeasible_flag)
+        """
+        v1 = float(c1.g @ u_des) < c1.b
+        v2 = float(c2.g @ u_des) < c2.b
+ 
+        # Case 1: neither violated
+        if not v1 and not v2:
+            return u_des.copy(), False
+ 
+        # Case 2: only c1 violated — project, verify c2
+        if v1 and not v2:
+            u_c, lam = self._project_single(u_des, c1)
+            if lam >= -1e-8 and float(c2.g @ u_c) >= c2.b:
+                return u_c, False
+ 
+        # Case 3: only c2 violated — project, verify c1
+        if not v1 and v2:
+            u_c, lam = self._project_single(u_des, c2)
+            if lam >= -1e-8 and float(c1.g @ u_c) >= c1.b:
+                return u_c, False
+ 
+        # Case 4: both active — closed-form 2x2 Gram inverse
+        g11 = float(c1.g @ c1.g)
+        g22 = float(c2.g @ c2.g)
+        g12 = float(c1.g @ c2.g)
+        det = g11 * g22 - g12 * g12
+ 
+        if abs(det) < 1e-10:
+            # g1 || g2: project onto more critical constraint
+            dom = c1 if c1.h < c2.h else c2
+            return self._project_single(u_des, dom)[0], False
+ 
+        r1   = c1.b - float(c1.g @ u_des)
+        r2   = c2.b - float(c2.g @ u_des)
+        lam1 = ( g22 * r1 - g12 * r2) / det
+        lam2 = (-g12 * r1 + g11 * r2) / det
+ 
+        # KKT dual feasibility: both multipliers must be >= 0
+        if lam1 >= -1e-8 and lam2 >= -1e-8:
+            return u_des + lam1 * c1.g + lam2 * c2.g, False
+ 
+        # One multiplier negative: only the other constraint is truly active
+        if lam1 < -1e-8:
+            return self._project_single(u_des, c2)[0], False
+        return self._project_single(u_des, c1)[0], False
+ 
+    def _soft_qp(self,
+                  u_des: np.ndarray,
+                  c1: CBFConstraint,
+                  c2: CBFConstraint):
+        """
+        Soft-CBF fallback — always feasible.
+ 
+            min  0.5*||u-u_des||^2 + (p/2)*delta^2
+            s.t. g1^T u >= b1 - delta
+                 g2^T u >= b2 - delta,  delta >= 0
+ 
+        Solved by bisection on delta in [0, delta_max].
+        Provides ISSf bound (Romdlony & Jayawardhana 2016):
+            h_i(t) >= h_i(0)*exp(-gamma_i*t)
+                     - integral_0^t exp(-gamma_i*(t-s)) * delta*(s) ds
+ 
+        Returns (u*, delta*)
+        """
+        lo, hi = 0.0, max(abs(c1.b), abs(c2.b), 0.1) * 2.0
+        for _ in range(20):
+            mid  = (lo + hi) / 2.0
+            cs1  = CBFConstraint(g=c1.g, h=c1.h, b=c1.b - mid, label=c1.label)
+            cs2  = CBFConstraint(g=c2.g, h=c2.h, b=c2.b - mid, label=c2.label)
+            u_c, _ = self._project_dual(u_des, cs1, cs2)
+            ok = (float(c1.g @ u_c) >= c1.b - mid - 1e-6 and
+                  float(c2.g @ u_c) >= c2.b - mid - 1e-6)
+            if ok: hi = mid
+            else:  lo = mid
+        delta = hi
+        cs1 = CBFConstraint(g=c1.g, h=c1.h, b=c1.b - delta, label=c1.label)
+        cs2 = CBFConstraint(g=c2.g, h=c2.h, b=c2.b - delta, label=c2.label)
+        u_s, _ = self._project_dual(u_des, cs1, cs2)
+        return u_s, delta
+    
+
+    def filter(self,
+               u_des:   np.ndarray,
+               sdf_obs: np.ndarray,
+               sdf_unk: Optional[np.ndarray],
+               gx: int, gy: int,
+               res: float) -> CBFResult:
+        """
+        Apply dual CBF filter to a desired velocity command.
+ 
+        Parameters
+        ----------
+        u_des   : APF desired velocity [vx, vy] (m/s)
+        sdf_obs : obstacle SDF (metres)           built in map_cb
+        sdf_unk : frontier SDF (metres) or None   built in map_cb
+        gx, gy  : drone's current grid cell indices
+        res     : map resolution (m/cell)
+ 
+        Returns CBFResult with u_safe and full diagnostics.
+        """
+        u_des = np.asarray(u_des, dtype=float)
+ 
+        # Constraint 1: obstacle
+        c1 = self._make_constraint(
+            sdf_obs, gx, gy, res,
+            self.d_safe, self.a1, self.gamma1, "obs")
+ 
+        # Constraint 2: frontier (may be inactive if map fully explored)
+        frontier_active = sdf_unk is not None
+        if not frontier_active:
+            u_cbf, _ = self._project_single(u_des, c1)
+            spd   = float(np.linalg.norm(u_cbf))
+            clip  = spd > self.v_max
+            u_safe = u_cbf / spd * self.v_max if clip and spd > 1e-8 else u_cbf.copy()
+            return CBFResult(
+                u_safe=u_safe, u_des=u_des,
+                h1=c1.h, h2=float('inf'),
+                phi1=float(sdf_obs[gy, gx]), phi2=float('inf'),
+                slack=float(np.linalg.norm(u_safe - u_des)),
+                cbf1_active=float(c1.g @ u_safe) < c1.b + 1e-4,
+                cbf2_active=False, speed_clipped=clip,
+                qp_infeasible=False, delta=0.0)
+ 
+        c2 = self._make_constraint(
+            sdf_unk, gx, gy, res,
+            self.d_stop, self.a2, self.gamma2, "frontier")
+ 
+        # Attempt hard dual projection
+        u_cbf, infeas = self._project_dual(u_des, c1, c2)
+ 
+        # Verify — fall back to soft QP if still infeasible
+        delta = 0.0
+        if (float(c1.g @ u_cbf) < c1.b - 1e-4 or
+                float(c2.g @ u_cbf) < c2.b - 1e-4):
+            u_cbf, delta = self._soft_qp(u_des, c1, c2)
+            infeas = True
+ 
+        # Speed ceiling (ball projection)
+        spd  = float(np.linalg.norm(u_cbf))
+        clip = spd > self.v_max
+        u_safe = u_cbf / spd * self.v_max if clip and spd > 1e-8 else u_cbf.copy()
+ 
+        return CBFResult(
+            u_safe=u_safe, u_des=u_des,
+            h1=c1.h, h2=c2.h,
+            phi1=float(sdf_obs[gy, gx]), phi2=float(sdf_unk[gy, gx]),
+            slack=float(np.linalg.norm(u_safe - u_des)),
+            cbf1_active=float(c1.g @ u_safe) < c1.b + 1e-4,
+            cbf2_active=float(c2.g @ u_safe) < c2.b + 1e-4,
+            speed_clipped=clip, qp_infeasible=infeas, delta=delta)
+ 
 
 class RRTNode:
     def __init__(self, x, y):
@@ -57,12 +370,9 @@ class AutonomousExplorer(Node):
             ("max_speed", 0.2),
             ("waypoint_threshold", 0.5),
 
-            ("heading_tolerance", 30.0),     # degrees - move forward if within this
             ("stuck_time_threshold", 4.0),   # seconds - time to detect astuck
             ("stuck_distance_threshold", 0.15),  # meters - min movement expected
-            ("alignment_yaw_gain", 1.0),     # yaw control gain during alignment
-            ("forward_yaw_gain", 0.5),       # yaw control gain during forward motion
-                      
+                    
             # --- EXPLORATION STRATEGY ---
             ("frontier_weight_size", 1.0),   # Prefer larger frontiers
             ("frontier_weight_distance", 0.5), # Prefer closer frontiers
@@ -76,7 +386,15 @@ class AutonomousExplorer(Node):
             ("k_rep_drone", 200.0),
             ("other_drone_init_x", 0.0),
             ("other_drone_init_y", 0.0),
-            ("frontier_search_radii", [ 5.0, 10.0, -1.0])
+            ("frontier_search_radii", [ 5.0, 10.0, -1.0]),
+
+            ("cbf_d_safe",            0.35),   # obstacle standoff (m)
+            ("cbf_d_stop",            0.50),   # frontier standoff (m)
+            ("cbf_a1",                2.0),    # tanh sharpness — obstacle
+            ("cbf_a2",                1.5),    # tanh sharpness — frontier
+            ("cbf_gamma1",            1.5),    # CBF gain — obstacle
+            ("cbf_gamma2",            1.0),    # CBF gain — frontier
+            ("cbf_min_cluster_cells", 25),     # min unknown cluster size
         ])
         
         self.map_frame = self.get_parameter("map_frame").value
@@ -84,7 +402,6 @@ class AutonomousExplorer(Node):
         self.takeoff_altitude = 1.3  # meters
         self.altitude_ready = False
         self.current_z = 0.0
-        self.current_range = 0.0
         # Frontier params
         self.min_frontier_size = self.get_parameter("min_frontier_size").value
         self.frontier_rate = self.get_parameter("frontier_search_rate").value
@@ -108,11 +425,8 @@ class AutonomousExplorer(Node):
         self.wp_threshold = self.get_parameter("waypoint_threshold").value
         
         # Exploration strategy
-        self.heading_tolerance = math.radians(self.get_parameter("heading_tolerance").value)
         self.stuck_time_threshold = self.get_parameter("stuck_time_threshold").value
         self.stuck_distance_threshold = self.get_parameter("stuck_distance_threshold").value
-        self.alignment_yaw_gain = self.get_parameter("alignment_yaw_gain").value
-        self.forward_yaw_gain = self.get_parameter("forward_yaw_gain").value
         self.w_size = self.get_parameter("frontier_weight_size").value
         self.w_dist = self.get_parameter("frontier_weight_distance").value
         self._last_apf_forces = {
@@ -137,12 +451,25 @@ class AutonomousExplorer(Node):
         raw_radii = self.get_parameter("frontier_search_radii").value
         self.frontier_search_radii = [float(r) for r in raw_radii]
         
-        # Inflated map 
+        self.cbf = TanhDualCBF(
+            d_safe            = self.get_parameter("cbf_d_safe").value,
+            d_stop            = self.get_parameter("cbf_d_stop").value,
+            a1                = self.get_parameter("cbf_a1").value,
+            a2                = self.get_parameter("cbf_a2").value,
+            gamma1            = self.get_parameter("cbf_gamma1").value,
+            gamma2            = self.get_parameter("cbf_gamma2").value,
+            v_max             = self.max_speed,
+            min_cluster_cells = self.get_parameter("cbf_min_cluster_cells").value,
+        )
+        self._cbf_infeasible_count = 0
+         
         self.inflated_map = None
-        
-        # State
         self.map_data = None
         self.map_info = None
+        self.distance_field  = None
+        self.sdf_obs         = None 
+        self.sdf_unk         = None 
+
         self.current_x = 0.0
         self.current_y = 0.0
         self.current_yaw = 0.0
@@ -162,8 +489,10 @@ class AutonomousExplorer(Node):
         # Frontier tracking
         self.visited_frontiers = []  # Avoid revisiting
         self.exploration_complete = False
+
+        self.stuck_check_position = (0.0, 0.0)
+        self._free_cells_cache = None
         
-        self.distance_field = None
         self.local_min_count = 0
         self.local_min_threshold = 5
         self.escape_cycles_remaining = 0
@@ -171,14 +500,12 @@ class AutonomousExplorer(Node):
         self._smooth_rep = (0.0, 0.0)
         self.k_yaw = 0.3
         self.MAX_YAW_RATE = 0.5 
-        self._last_body_vel = (0.0,0.0)
 
         self._total_path_length = 0.0
         self._exploration_start_time = self.get_clock().now()
         self._last_explored_area = 0.0
         self._last_coverage_time = self.get_clock().now()
         self._running_min_clearance = float('inf')
-        self._hard_brake_count = 0
 
         qos_map = QoSProfile(
             reliability=ReliabilityPolicy.RELIABLE,
@@ -207,8 +534,6 @@ class AutonomousExplorer(Node):
         self.create_subscription(PoseStamped, "goal_pose", self.goal_cb, 10)
         self.create_subscription(PoseWithCovarianceStamped, self.other_drone_pose_topic,
                                 self.other_drone_pose_cb, qos_map)
-        # self.create_subscription(DistanceSensor, "fmu/in/distance_sensor",
-        #                         self.range_cb, qos_px4)
 
         self.vel_pub = self.create_publisher(Twist, "cmd_vel", 10)
         self.path_pub = self.create_publisher(Path, "global_path", qos_path)
@@ -239,7 +564,6 @@ class AutonomousExplorer(Node):
         # Safety
         self.metrics_clearance_pub = self.create_publisher(Float32, "metrics/obstacle_clearance_m", 10)
         self.metrics_min_clearance_pub = self.create_publisher(Float32, "metrics/min_clearance_running", 10)
-        self.metrics_hard_brake_pub = self.create_publisher(Int32, "metrics/hard_brake_count", 10)
         self.metrics_force_ratio_pub = self.create_publisher(Float32, "metrics/apf_force_ratio", 10)
 
         # Internal events 
@@ -247,16 +571,23 @@ class AutonomousExplorer(Node):
         self.metrics_local_min_pub = self.create_publisher(Int32, "metrics/local_min_count", 10)
         self.metrics_escape_pub = self.create_publisher(Bool, "metrics/escape_triggered", 10)
         self.metrics_replan_pub = self.create_publisher(Bool, "metrics/rrt_replan_triggered", 10)
+        self.metrics_tracking_error_pub = self.create_publisher(Float32, "metrics/path_tracking_error_m", 10)
 
-        # # Multi-drone (publish even in single drone mode, just won't be meaningful)
-        # self.metrics_overlap_pub = self.create_publisher(Float32, "metrics/coverage_overlap_pct", 10)
-        # self.metrics_balance_pub = self.create_publisher(Float32, "metrics/coverage_balance_ratio", 10)
-        # self.metrics_drone_dist_pub = self.create_publisher(Float32, "metrics/inter_drone_distance_m", 10)
-
+        self.metrics_cbf_h1_pub         = self.create_publisher(Float32, "metrics/cbf_h1",               10)
+        self.metrics_cbf_h2_pub         = self.create_publisher(Float32, "metrics/cbf_h2",               10)
+        self.metrics_cbf_phi1_pub       = self.create_publisher(Float32, "metrics/cbf_phi1_m",           10)
+        self.metrics_cbf_phi2_pub       = self.create_publisher(Float32, "metrics/cbf_phi2_m",           10)
+        self.metrics_cbf_slack_pub      = self.create_publisher(Float32, "metrics/cbf_slack",            10)
+        self.metrics_cbf1_active_pub    = self.create_publisher(Bool,    "metrics/cbf1_obstacle_active", 10)
+        self.metrics_cbf2_active_pub    = self.create_publisher(Bool,    "metrics/cbf2_frontier_active", 10)
+        self.metrics_cbf_infeasible_pub = self.create_publisher(Int32,   "metrics/cbf_infeasible_count", 10)
+        self.metrics_cbf_delta_pub      = self.create_publisher(Float32, "metrics/cbf_soft_delta",       10)
+        self.metrics_cbf_speed_clip_pub = self.create_publisher(Bool,    "metrics/cbf_speed_clipped",    10)
+        self.cbf_viz_pub = self.create_publisher(MarkerArray, "cbf_viz", 10)
+        
         self.frontier_timer = self.create_timer(1.0 / self.frontier_rate, self.frontier_search_loop)
         self.rrt_timer = self.create_timer(1.0 / self.rrt_replan_rate, self.rrt_replan)
         self.pf_timer = self.create_timer(1.0 / self.pf_rate, self.potential_field_control)
-        self.metrics_tracking_error_pub = self.create_publisher(Float32, "metrics/path_tracking_error_m", 10)
         
         self.get_logger().info(" AUTONOMOUS EXPLORER ONLINE!")
         self.get_logger().info("   Frontier Detection: ON")
@@ -307,38 +638,6 @@ class AutonomousExplorer(Node):
         msg_f = Float32(); msg_f.data = float(avg_speed)
         self.metrics_speed_pub.publish(msg_f)
     
-    # def range_cb(self, msg):
-    #     self.current_range = msg.current_distance
-    
-    #     if self.altitude_ready and self.current_range < 0.4:
-    #         self.get_logger().warn(
-    #             f"OBSTACLE CLOSE BELOW: {self.current_range:.2f} m",
-    #             throttle_duration_sec=1.0
-    #         )
-        # self.current_range = msg.current_distance
-
-        # if not self.altitude_ready:
-        #     self.get_logger().info(
-        #         f"Waiting for takeoff... rangefinder: {self.current_range:.2f}m "
-        #         f"/ {self.takeoff_altitude:.2f}m",
-        #         throttle_duration_sec=1.0
-        #         )
-            
-        #     if self.current_range >= (self.takeoff_altitude - 0.15):
-        #         self.altitude_ready = True
-        #         self.get_logger().info(
-        #             f"Takeoff altitude reached! Rangefinder: {self.current_range:.2f}m "
-        #             f"— starting exploration"
-        #             )
-        # else:
-        #     #Safety monitor while flying
-        #     if self.current_range < 0.4:
-        #         self.get_logger().warn(
-        #             f"OBSTACLE CLOSE BELOW: {self.current_range:.2f}m — "
-        #             f"PX4 terrain follow should be rising!",
-        #             throttle_duration_sec=1.0
-        #             )
-
     def attitude_cb(self, msg):
         # PX4 Quaternions are typically [w, x, y, z]
         q = msg.q
@@ -367,12 +666,19 @@ class AutonomousExplorer(Node):
         self.map_data = raw
 
         self.inflated_map = self._inflate_map(raw, msg.info.resolution)
-        
+        self._free_cells_cache = np.argwhere(self.inflated_map == 0)
+
         unique, counts = np.unique(self.map_data, return_counts=True)
         self.get_logger().info(
-        f"Map values: {dict(zip(unique.tolist(), counts.tolist()))}"
+        f"Map values: {dict(zip(unique.tolist(), counts.tolist()))}",
+        throttle_duration_sec=5.0  
         )
         self._build_distance_field()
+
+        self.sdf_obs = build_sdf_obstacle(raw, msg.info.resolution)
+        self.sdf_unk = build_sdf_frontier(raw, msg.info.resolution,
+                                           self.cbf.min_cluster_cells)
+        
         self._publish_inflated_map(msg)
     
     def goal_cb(self, msg):
@@ -411,17 +717,13 @@ class AutonomousExplorer(Node):
         """
         obstacle_mask = (raw >= 50)
         # unknown_mask = (raw == -1)
-        free_mask = (raw == 0)
+        # free_mask = (raw == 0)
 
         # Inflate obstacles
         inflate_cells = max(1, int(math.ceil(self.drone_radius / resolution)))
         struct = np.ones((2 * inflate_cells + 1, 2 * inflate_cells + 1), dtype=bool)
 
         inflated_obstacle = binary_dilation(obstacle_mask, structure=struct)
-        
-        # Inflate unknown borders — only the free cells adjacent to unknown get marked
-        # inflated_unknown = binary_dilation(unknown_mask, structure=struct)
-        # unknown_border_mask = inflated_unknown & free_mask  # don't mark unknown itself as lethal
 
         inflated = raw.copy().astype(np.int8)
         
@@ -445,17 +747,9 @@ class AutonomousExplorer(Node):
         out.info = original_msg.info
         out.data = self.inflated_map.flatten().tolist()
         self.inflated_map_pub.publish(out)
-        self.get_logger().info("Published inflated map", throttle_duration_sec=5.0)  # add this
+        self.get_logger().info("Published inflated map", throttle_duration_sec=5.0)  
     
-    # def fake_pose(self):
-    #     # Slowly move in a circle
-    #     t = self.get_clock().now().nanoseconds * 1e-9
-    #     self.current_x = 5.0 * math.cos(0.2 * t)
-    #     self.current_y = 5.0 * math.sin(0.2 * t)
-
-    
-    # ==================== FRONTIER DETECTION ====================
-    
+        
     def frontier_search_loop(self):
         if self.map_data is None:
             return
@@ -484,7 +778,7 @@ class AutonomousExplorer(Node):
             self.metrics_coverage_rate_pub.publish(msg_f)
             self._last_explored_area = explored_area
             self._last_coverage_time = now
- 
+
         if self._total_path_length > 0.1:
             efficiency = explored_area / self._total_path_length
             msg_f = Float32(); msg_f.data = float(efficiency)
@@ -556,6 +850,8 @@ class AutonomousExplorer(Node):
         height, width = self.map_data.shape
         if search_radius is not None and search_radius > 0:
             cx, cy = self.world_to_grid(self.current_x, self.current_y)
+            if cx is None:                    # ← add this guard
+                return []  
             r_cells = int(math.ceil(search_radius / self.map_info.resolution))
             row_min = max(0,      cy - r_cells)
             row_max = min(height, cy + r_cells)
@@ -624,12 +920,7 @@ class AutonomousExplorer(Node):
                 continue
             if self.inflated_map[gy, gx] >= 50:
                 continue
-            if not self._frontier_is_on_my_side(centroid_x, centroid_y):
-                self.get_logger().debug(
-                    f"Frontier ({centroid_x:.1f}, {centroid_y:.1f}) skipped — "
-                    f"on other drone's side of bisector"
-                )
-                continue
+       
             if self.is_visited((centroid_x, centroid_y)):
                 continue
             
@@ -651,9 +942,7 @@ class AutonomousExplorer(Node):
         if best_centroid:
             self.visited_frontiers.append(best_centroid)
         if best_centroid is None:
-            self.get_logger().warn(
-                "No frontiers on my side of bisector — falling back to global search"
-            )
+            self.get_logger().warn("No valid frontiers found")
             return None
             # return self._select_best_frontier_unconstrained(frontiers)
         return best_centroid
@@ -677,29 +966,6 @@ class AutonomousExplorer(Node):
                 known_free += 1
             total_steps += 1
         return known_free / max(total_steps, 1)
-
-    def _frontier_is_on_my_side(self, fx, fy):
-        """
-        Returns True if frontier (fx, fy) is on this drone's side of the
-        perpendicular bisector between the two drones.
-        """
-        if self.other_drone_x is None or self.other_drone_y is None:
-            return True  # Unknown other drone — don't filter
-
-        mid_x = (self.current_x + self.other_drone_x) / 2.0
-        mid_y = (self.current_y + self.other_drone_y) / 2.0
-
-        # Vector from other drone → this drone (defines the positive half-plane)
-        axis_x = self.current_x - self.other_drone_x
-        axis_y = self.current_y - self.other_drone_y
-
-        # Vector from midpoint → frontier
-        to_frontier_x = fx - mid_x
-        to_frontier_y = fy - mid_y
-
-        # Positive dot product → same side as this drone
-        dot = axis_x * to_frontier_x + axis_y * to_frontier_y
-        return dot >= 0.0
     
     def is_visited(self, frontier_pos, threshold=2.0):
         """Check if frontier is too close to already visited frontiers"""
@@ -708,7 +974,8 @@ class AutonomousExplorer(Node):
             if dist < threshold:
                 return True
         return False
-    
+
+
     # ==================== RRT* GLOBAL PLANNER ====================
     
     def rrt_replan(self):
@@ -750,7 +1017,7 @@ class AutonomousExplorer(Node):
             self.current_waypoint_idx = 1
             self._last_replan_time = self.get_clock().now()
             self.last_stuck_check_time = None
-            self.last_position = (self.current_x, self.current_y)
+            self.stuck_check_position = (self.current_x, self.current_y)
             self.publish_path_viz(path)  
             self.get_logger().info(
                 f"Path found: {len(path)} waypoints, "
@@ -872,19 +1139,11 @@ class AutonomousExplorer(Node):
         return None
     
     def sample_free(self):
-        if self.map_info is None or self.inflated_map is None:
+        if self._free_cells_cache is None or len(self._free_cells_cache) == 0:
             return (self.current_x, self.current_y)
-        
-        free_cells = np.argwhere(self.inflated_map == 0)  
-        
-        if len(free_cells) == 0:
-            return (self.current_x, self.current_y)
-        
-        idx = random.randint(0, len(free_cells) - 1)
-        gy, gx = free_cells[idx]  
-        
-        wx, wy = self.grid_to_world(gx, gy)
-        return (wx, wy)
+        idx = random.randint(0, len(self._free_cells_cache) - 1)
+        gy, gx = self._free_cells_cache[idx]
+        return self.grid_to_world(gx, gy)
     
     def steer(self, from_x, from_y, to_x, to_y):
         """Extend from current point toward target by step_size"""
@@ -960,14 +1219,16 @@ class AutonomousExplorer(Node):
             wp_x, wp_y = self.waypoints[idx]
             fa = self.attractive_force(wp_x, wp_y)
             f_att = (f_att[0] + w * fa[0], f_att[1] + w * fa[1])
-        
+
         f_rep = self.repulsive_force()
-        alpha = 0.8 
+        
+        alpha = 0.8
         self._smooth_rep = (
             alpha * f_rep[0] + (1 - alpha) * self._smooth_rep[0],
             alpha * f_rep[1] + (1 - alpha) * self._smooth_rep[1],
         )
         f_rep = self._smooth_rep
+
         f_rep_drone = self.repulsive_force_other_drone()
 
         fx = f_att[0] + f_rep[0] + f_rep_drone[0]
@@ -982,7 +1243,7 @@ class AutonomousExplorer(Node):
         self.get_logger().info(
             f"F_att={math.hypot(*f_att):.1f} | "
             f"F_obs={math.hypot(*f_rep):.1f} | "
-            f"F_drone={math.hypot(*f_rep_drone):.1f}"
+            f"F_drone={math.hypot(*f_rep_drone):.1f} |"
             f"F_total={math.hypot(fx,fy):.1f}",
             throttle_duration_sec=0.5
         )
@@ -994,6 +1255,7 @@ class AutonomousExplorer(Node):
         }
             
         force_mag = math.hypot(fx, fy)
+
         if force_mag < 0.15 and dist > self.wp_threshold:
             self.local_min_count += 1
         else:
@@ -1020,27 +1282,87 @@ class AutonomousExplorer(Node):
             fx += self.escape_vec[0]
             fy += self.escape_vec[1]
             force_mag = math.hypot(fx, fy)  
-
+        
         if force_mag < 1e-4:
             self.publish_zero_velocity()
             return
         
         desired_speed = self.max_speed * math.tanh(force_mag / self.k_att)
 
-        yaw = self.current_yaw
+        # yaw = self.current_yaw
 
         # vx_body =  (math.cos(yaw) * fx/force_mag + math.sin(yaw) * fy/force_mag)*desired_speed
         # vy_body = (-math.sin(yaw) * fx/force_mag + math.cos(yaw) * fy/force_mag)*desired_speed
         vx = (fx / force_mag) * desired_speed
         vy = (fy / force_mag) * desired_speed
         # self._last_body_vel = (vx_body, vy_body)
-        
+        gx_cell, gy_cell = self.world_to_grid(self.current_x, self.current_y)
+
+        if gx_cell is not None and self.sdf_obs is not None:
+            cbf_result = self.cbf.filter(
+                u_des   = np.array([vx, vy]),
+                sdf_obs = self.sdf_obs,
+                sdf_unk = self.sdf_unk,
+                gx      = gx_cell,
+                gy      = gy_cell,
+                res     = self.map_info.resolution,
+            )
+ 
+            vx = float(cbf_result.u_safe[0])
+            vy = float(cbf_result.u_safe[1])
+ 
+            if cbf_result.qp_infeasible:
+                self._cbf_infeasible_count += 1
+ 
+            msg_f = Float32(); msg_f.data = float(cbf_result.h1)
+            self.metrics_cbf_h1_pub.publish(msg_f)
+ 
+            msg_f = Float32()
+            msg_f.data = float(cbf_result.h2) if cbf_result.h2 != float('inf') else 1.0
+            self.metrics_cbf_h2_pub.publish(msg_f)
+ 
+            msg_f = Float32(); msg_f.data = float(cbf_result.phi1)
+            self.metrics_cbf_phi1_pub.publish(msg_f)
+ 
+            msg_f = Float32()
+            msg_f.data = float(cbf_result.phi2) if cbf_result.phi2 != float('inf') else 99.0
+            self.metrics_cbf_phi2_pub.publish(msg_f)
+ 
+            msg_f = Float32(); msg_f.data = float(cbf_result.slack)
+            self.metrics_cbf_slack_pub.publish(msg_f)
+ 
+            msg_b = Bool(); msg_b.data = bool(cbf_result.cbf1_active)
+            self.metrics_cbf1_active_pub.publish(msg_b)
+ 
+            msg_b = Bool(); msg_b.data = bool(cbf_result.cbf2_active)
+            self.metrics_cbf2_active_pub.publish(msg_b)
+ 
+            msg_i = Int32(); msg_i.data = int(self._cbf_infeasible_count)
+            self.metrics_cbf_infeasible_pub.publish(msg_i)
+ 
+            msg_f = Float32(); msg_f.data = float(cbf_result.delta)
+            self.metrics_cbf_delta_pub.publish(msg_f)
+ 
+            msg_b = Bool(); msg_b.data = bool(cbf_result.speed_clipped)
+            self.metrics_cbf_speed_clip_pub.publish(msg_b)
+ 
+            self.get_logger().info(
+                f"CBF | h1={cbf_result.h1:.3f} phi1={cbf_result.phi1:.2f}m "
+                f"h2={cbf_result.h2:.3f} phi2={cbf_result.phi2:.2f}m "
+                f"slack={cbf_result.slack:.3f} "
+                f"{'[C1]' if cbf_result.cbf1_active else '    '}"
+                f"{'[C2]' if cbf_result.cbf2_active else '    '}"
+                f"{'[INFEAS]' if cbf_result.qp_infeasible else ''}",
+                throttle_duration_sec=0.5)
+            
+            self._publish_cbf_viz(cbf_result)
+
         desired_yaw = math.atan2(vy, vx)
         yaw_error = desired_yaw - self.current_yaw
         # wrap to [-π, π]
         yaw_error = (yaw_error + math.pi) % (2 * math.pi) - math.pi
         yaw_rate = 0.0
-        if abs(yaw_error) > math.radians(10.0):
+        if abs(yaw_error) > math.radians(5.0):
             yaw_rate = float(np.clip(self.k_yaw * yaw_error, -self.MAX_YAW_RATE, self.MAX_YAW_RATE))
 
         if self.check_if_stuck():
@@ -1049,73 +1371,50 @@ class AutonomousExplorer(Node):
             self.publish_zero_velocity()
             return
         
-        self._publish_apf_markers()     
-        self.get_logger().info(
-            f"pos=({self.current_x:.2f},{self.current_y:.2f}) "
-            f"wp=({target_x:.2f},{target_y:.2f}) "
-            f"vx={vx:.2f} vy={vy:.2f} yaw={self.current_yaw:.2f}"
-        )  
+        self._publish_apf_markers()
 
-        gx, gy = self.world_to_grid(self.current_x, self.current_y)
-        if gx is not None and self.distance_field is not None:
-            d = float(self.distance_field[gy, gx])
-
-            msg_f = Float32(); msg_f.data = float(d)
-            self.metrics_clearance_pub.publish(msg_f) 
-            hard_brake_dist = self.drone_radius + 0.2  # 0.40m
-            
+        if gx_cell is not None and self.distance_field is not None:
+            d = float(self.distance_field[gy_cell, gx_cell])
+            msg_f = Float32(); msg_f.data = d
+            self.metrics_clearance_pub.publish(msg_f)
             if d < self._running_min_clearance:
                 self._running_min_clearance = d
             msg_f = Float32(); msg_f.data = float(self._running_min_clearance)
             self.metrics_min_clearance_pub.publish(msg_f)
-            
-            if d < hard_brake_dist:
-                self.get_logger().warn(
-                    f"HARD BRAKE: obstacle at {d:.2f}m < {hard_brake_dist:.2f}m",
-                    throttle_duration_sec=0.5
-                )
-                self.publish_zero_velocity()
-                self._hard_brake_count += 1
-                msg_i = Int32(); msg_i.data = self._hard_brake_count
-                self.metrics_hard_brake_pub.publish(msg_i)
-                return
+ 
+        tracking_err = self._compute_tracking_error()
+        msg_f = Float32(); msg_f.data = float(tracking_err)
+        self.metrics_tracking_error_pub.publish(msg_f)
         self.publish_velocity(vx, vy, yaw_rate)
     
     def check_if_stuck(self):
-        """Detect if robot is stuck (not making progress)"""
         current_time = self.get_clock().now()
         if self._last_replan_time is not None:
             elapsed = (self.get_clock().now() - self._last_replan_time).nanoseconds / 1e9
             if elapsed < 3.0:
                 return False
-        # Initialize on first call
+
         if self.last_stuck_check_time is None:
             self.last_stuck_check_time = current_time
-            self.last_position = (self.current_x, self.current_y)
+            self.stuck_check_position = (self.current_x, self.current_y)  
             return False
         
-        # Check periodically
         time_elapsed = (current_time - self.last_stuck_check_time).nanoseconds / 1e9
         
         if time_elapsed >= self.stuck_time_threshold:
-            # Calculate distance traveled
             distance_traveled = math.hypot(
-                self.current_x - self.last_position[0],
-                self.current_y - self.last_position[1]
+                self.current_x - self.stuck_check_position[0],  
+                self.current_y - self.stuck_check_position[1]  
             )
-            
-            # Update for next check
             self.last_stuck_check_time = current_time
-            self.last_position = (self.current_x, self.current_y)
+            self.stuck_check_position = (self.current_x, self.current_y)  
             
-            # Check if stuck
             if distance_traveled < self.stuck_distance_threshold:
                 msg_b = Bool(); msg_b.data = True
                 self.metrics_stuck_pub.publish(msg_b)
                 return True
         
         return False
-    
     def attractive_force(self, target_x, target_y):
         """Pull toward target waypoint"""
         d_switch = 1.5
@@ -1196,8 +1495,8 @@ class AutonomousExplorer(Node):
         d0 = self.other_drone_safety_radius
         scalar = self.k_rep_drone * (1.0 / dist - 1.0 / d0) / (dist ** 2)
         
-        fx = -scalar * (dx / dist)
-        fy = -scalar * (dy / dist)
+        fx = scalar * (dx / dist)
+        fy = scalar * (dy / dist)
         
         cap = max(math.hypot(*self.attractive_force(
             self.goal_x or self.current_x,
@@ -1421,6 +1720,229 @@ class AutonomousExplorer(Node):
             markers.markers.append(m)
         
         self.apf_markers_pub.publish(markers)
+    
+    def _publish_cbf_viz(self, cbf_result: CBFResult):
+            """
+            Publish RViz markers for the CBF safety filter:
+            - u_des  arrow  (yellow)
+            - u_safe arrow  (green if untouched, red if modified)
+            - d_safe circle (red ring around drone)
+            - d_stop circle (cyan ring around drone)
+            - constraint‑gradient arrows (magenta / cyan)
+            - text overlay with h₁, h₂, φ₁, φ₂
+            """
+            markers = MarkerArray()
+            now = self.get_clock().now().to_msg()
+            px, py, pz = self.current_x, self.current_y, 0.6  # slightly above ground
+
+            arrow_scale = 3.0  # visual length multiplier
+
+            # ── 0  Delete‑all (keeps old IDs from lingering) ──
+            delete = Marker()
+            delete.header.frame_id = self.map_frame
+            delete.header.stamp = now
+            delete.ns = "cbf"
+            delete.action = Marker.DELETEALL
+            markers.markers.append(delete)
+
+            # ── 1  u_des arrow (yellow) ──
+            m = Marker()
+            m.header.frame_id = self.map_frame
+            m.header.stamp = now
+            m.ns = "cbf"
+            m.id = 1
+            m.type = Marker.ARROW
+            m.action = Marker.ADD
+            mag_des = float(np.linalg.norm(cbf_result.u_des))
+            if mag_des > 1e-4:
+                dx, dy = cbf_result.u_des / mag_des
+                length = arrow_scale * mag_des
+                m.points = [
+                    Point(x=px, y=py, z=pz),
+                    Point(x=px + dx * length, y=py + dy * length, z=pz),
+                ]
+            else:
+                m.points = [Point(x=px, y=py, z=pz), Point(x=px, y=py, z=pz)]
+            m.scale.x = 0.06  # shaft diameter
+            m.scale.y = 0.12  # head diameter
+            m.scale.z = 0.10
+            m.color = ColorRGBA(r=1.0, g=1.0, b=0.0, a=0.9)  # yellow
+            markers.markers.append(m)
+
+            # ── 2  u_safe arrow (green = unmodified, red = CBF intervened) ──
+            m = Marker()
+            m.header.frame_id = self.map_frame
+            m.header.stamp = now
+            m.ns = "cbf"
+            m.id = 2
+            m.type = Marker.ARROW
+            m.action = Marker.ADD
+            mag_safe = float(np.linalg.norm(cbf_result.u_safe))
+            if mag_safe > 1e-4:
+                dx, dy = cbf_result.u_safe / mag_safe
+                length = arrow_scale * mag_safe
+                m.points = [
+                    Point(x=px, y=py, z=pz),
+                    Point(x=px + dx * length, y=py + dy * length, z=pz),
+                ]
+            else:
+                m.points = [Point(x=px, y=py, z=pz), Point(x=px, y=py, z=pz)]
+            m.scale.x = 0.07
+            m.scale.y = 0.14
+            m.scale.z = 0.12
+            modified = cbf_result.cbf1_active or cbf_result.cbf2_active
+            if modified:
+                m.color = ColorRGBA(r=1.0, g=0.0, b=0.0, a=1.0)  # red
+            else:
+                m.color = ColorRGBA(r=0.0, g=1.0, b=0.0, a=1.0)  # green
+            markers.markers.append(m)
+
+            # ── 3  d_safe circle (obstacle standoff – red ring) ──
+            m = Marker()
+            m.header.frame_id = self.map_frame
+            m.header.stamp = now
+            m.ns = "cbf"
+            m.id = 3
+            m.type = Marker.CYLINDER
+            m.action = Marker.ADD
+            m.pose.position.x = px
+            m.pose.position.y = py
+            m.pose.position.z = 0.02
+            d_safe = self.cbf.d_safe
+            m.scale.x = d_safe * 2.0
+            m.scale.y = d_safe * 2.0
+            m.scale.z = 0.01  # flat disk
+            alpha = 0.7 if cbf_result.cbf1_active else 0.25
+            m.color = ColorRGBA(r=1.0, g=0.2, b=0.2, a=alpha)
+            markers.markers.append(m)
+
+            # ── 4  d_stop circle (frontier standoff – cyan ring) ──
+            m = Marker()
+            m.header.frame_id = self.map_frame
+            m.header.stamp = now
+            m.ns = "cbf"
+            m.id = 4
+            m.type = Marker.CYLINDER
+            m.action = Marker.ADD
+            m.pose.position.x = px
+            m.pose.position.y = py
+            m.pose.position.z = 0.01
+            d_stop = self.cbf.d_stop
+            m.scale.x = d_stop * 2.0
+            m.scale.y = d_stop * 2.0
+            m.scale.z = 0.01
+            alpha = 0.7 if cbf_result.cbf2_active else 0.15
+            m.color = ColorRGBA(r=0.0, g=0.8, b=1.0, a=alpha)
+            markers.markers.append(m)
+
+            # ── 5  Constraint‑1 gradient (obstacle, magenta arrow) ──
+            gx_cell, gy_cell = self.world_to_grid(self.current_x, self.current_y)
+            if gx_cell is not None and self.sdf_obs is not None:
+                g1 = self.cbf._grad(self.sdf_obs, gx_cell, gy_cell,
+                                    self.map_info.resolution)
+                gn = float(np.linalg.norm(g1))
+                if gn > 1e-6:
+                    m = Marker()
+                    m.header.frame_id = self.map_frame
+                    m.header.stamp = now
+                    m.ns = "cbf"
+                    m.id = 5
+                    m.type = Marker.ARROW
+                    m.action = Marker.ADD
+                    g1n = g1 / gn
+                    glen = 0.6  # fixed visual length
+                    m.points = [
+                        Point(x=px, y=py, z=pz + 0.15),
+                        Point(x=px + g1n[0] * glen,
+                            y=py + g1n[1] * glen,
+                            z=pz + 0.15),
+                    ]
+                    m.scale.x = 0.04
+                    m.scale.y = 0.08
+                    m.scale.z = 0.06
+                    m.color = ColorRGBA(r=1.0, g=0.0, b=1.0, a=0.8)  # magenta
+                    markers.markers.append(m)
+
+            # ── 6  Constraint‑2 gradient (frontier, cyan arrow) ──
+            if gx_cell is not None and self.sdf_unk is not None:
+                g2 = self.cbf._grad(self.sdf_unk, gx_cell, gy_cell,
+                                    self.map_info.resolution)
+                gn = float(np.linalg.norm(g2))
+                if gn > 1e-6:
+                    m = Marker()
+                    m.header.frame_id = self.map_frame
+                    m.header.stamp = now
+                    m.ns = "cbf"
+                    m.id = 6
+                    m.type = Marker.ARROW
+                    m.action = Marker.ADD
+                    g2n = g2 / gn
+                    glen = 0.6
+                    m.points = [
+                        Point(x=px, y=py, z=pz + 0.25),
+                        Point(x=px + g2n[0] * glen,
+                            y=py + g2n[1] * glen,
+                            z=pz + 0.25),
+                    ]
+                    m.scale.x = 0.04
+                    m.scale.y = 0.08
+                    m.scale.z = 0.06
+                    m.color = ColorRGBA(r=0.0, g=1.0, b=1.0, a=0.8)  # cyan
+                    markers.markers.append(m)
+
+            # ── 7  Text overlay ──
+            m = Marker()
+            m.header.frame_id = self.map_frame
+            m.header.stamp = now
+            m.ns = "cbf"
+            m.id = 7
+            m.type = Marker.TEXT_VIEW_FACING
+            m.action = Marker.ADD
+            m.pose.position.x = px
+            m.pose.position.y = py
+            m.pose.position.z = pz + 0.8
+            m.scale.z = 0.18  # text height
+            h2_str = f"{cbf_result.h2:.2f}" if cbf_result.h2 != float('inf') else "N/A"
+            phi2_str = f"{cbf_result.phi2:.2f}" if cbf_result.phi2 != float('inf') else "N/A"
+            flags = ""
+            if cbf_result.cbf1_active:
+                flags += " [OBS]"
+            if cbf_result.cbf2_active:
+                flags += " [FRO]"
+            if cbf_result.qp_infeasible:
+                flags += " [SOFT]"
+            if cbf_result.speed_clipped:
+                flags += " [CLIP]"
+            m.text = (
+                f"h1={cbf_result.h1:.2f}  phi1={cbf_result.phi1:.2f}m\n"
+                f"h2={h2_str}  phi2={phi2_str}m\n"
+                f"slack={cbf_result.slack:.3f}{flags}"
+            )
+            m.color = ColorRGBA(r=1.0, g=1.0, b=1.0, a=1.0)
+            markers.markers.append(m)
+
+            # ── 8  "Intervention flash" – a sphere that pops when CBF fires ──
+            if cbf_result.cbf1_active or cbf_result.cbf2_active:
+                m = Marker()
+                m.header.frame_id = self.map_frame
+                m.header.stamp = now
+                m.ns = "cbf"
+                m.id = 8
+                m.type = Marker.SPHERE
+                m.action = Marker.ADD
+                m.pose.position.x = px
+                m.pose.position.y = py
+                m.pose.position.z = pz
+                r = 0.15
+                m.scale.x = r * 2
+                m.scale.y = r * 2
+                m.scale.z = r * 2
+                m.color = ColorRGBA(r=1.0, g=0.0, b=0.0, a=0.6)
+                m.lifetime.sec = 0
+                m.lifetime.nanosec = 300_000_000  # flash for 0.3 s
+                markers.markers.append(m)
+
+            self.cbf_viz_pub.publish(markers)
         
 def main():
 
