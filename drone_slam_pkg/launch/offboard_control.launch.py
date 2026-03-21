@@ -7,7 +7,7 @@ import os
 
 
 def generate_launch_description():
-    package_dir = get_package_share_directory('drone_control_pkg')
+    package_dir = get_package_share_directory('drone_slam_pkg')
     # bash_script_path = os.path.join(package_dir, 'scripts', 'TerminatorScript.sh')
     return LaunchDescription([
 
