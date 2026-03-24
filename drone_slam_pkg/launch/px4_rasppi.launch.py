@@ -35,12 +35,12 @@ def generate_launch_description():
             'Vis/InlierDistance': '0.1',        
             'wait_for_transform': 2.0,
             'Optimizer/GravitySigma': '0',
-            'wait_imu_to_init': False,
+            'wait_imu_to_init': True,
             # 'Vis/FeatureType': '10',
             'Kp/DetectorStrategy': '10',
 
-            'RGBD/AngularUpdate': '0.01',
-            'RGBD/LinearUpdate': '0.01',
+            'RGBD/AngularUpdate': '0.05',
+            'RGBD/LinearUpdate': '0.05',
             
             'Odom/Strategy': '1',
             'Vis/MaxFeatures': '300',
@@ -49,8 +49,8 @@ def generate_launch_description():
             'NormalsSegmentation': 'true',
             'Grid/MaxGroundHeight': '0.5', 
             'Grid/MaxObstacleHeight': '1.10',
-            'Grid/NoiseFilteringRadius': '0.15',
-            'Grid/NoiseFilteringMinNeighbors': '7',
+            'Grid/NoiseFilteringRadius': '0.5',
+            'Grid/NoiseFilteringMinNeighbors': '4',
             
             'database_path': f'~/.ros/{db_name}.db'
         }
