@@ -160,7 +160,10 @@ def generate_launch_description():
             output='screen',
             parameters=[
                 {'use_sim_time': False},
-                {'vehicle_ns': 'x500_drone_0'}
+                {'vehicle_ns': 'x500_drone_0'},
+                {'gyro_noise': 0.0150},   #EKF2_GYR_NOISE
+                {'accel_noise': 0.3500},  #EKF2_ACC_NOISE
+
             ],
         ),
 
