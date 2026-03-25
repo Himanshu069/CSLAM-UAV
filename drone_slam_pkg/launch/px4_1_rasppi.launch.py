@@ -41,7 +41,7 @@ def generate_launch_description():
             # 'Vis/FeatureType': '10',
             'Kp/DetectorStrategy': '10',
 
-            'Vis/MaxFeatures': '300'
+            'Vis/MaxFeatures': '300',
             'Odom/Strategy': '1',
             
             'RGBD/AngularUpdate': '0.01',
@@ -139,7 +139,7 @@ def generate_launch_description():
             remappings=[
                 ('image',       '/x500_drone_1/rgb/image_raw'),
                 ('camera_info', '/x500_drone_1/rgb/camera_info'),
-                ('image_rect',  '/x500_drone_1/rgb/image') # This is your new flattened topic!
+                ('image_rect',  '/x500_drone_1/rgb/image') 
             ],
         ),
           
@@ -162,7 +162,9 @@ def generate_launch_description():
             parameters=[
                 {'use_sim_time': False},
                 {'vehicle_ns': 'x500_drone_1'},
-                {'px4_ns': '/px4_1'}
+                {'px4_ns': '/px4_1'},
+                {'gyro_noise': 0.0150},   #EKF2_GYR_NOISE
+                {'accel_noise': 0.3500},  #EKF2_ACC_NOISE
             ],
             remappings=[
                 ('/fmu/out/vehicle_attitude','px4_1/fmu/out/vehicle_attitude'),
