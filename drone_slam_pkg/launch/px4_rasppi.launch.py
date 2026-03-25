@@ -8,10 +8,10 @@ import os
 import yaml
 
 def generate_launch_description():
-    px4_dir = os.path.join(os.getenv("HOME"), "PX4-Autopilot")
-    yaml_file = os.path.expanduser('~/oak_run.yaml')
-    with open(yaml_file,'r') as f:
-        params = yaml.safe_load(f)
+    #px4_dir = os.path.join(os.getenv("HOME"), "PX4-Autopilot")
+    #yaml_file = os.path.expanduser('~/oak_run.yaml')
+    #with open(yaml_file,'r') as f:
+    #    params = yaml.safe_load(f)
    # oak_name = "oak"
    # depthai_prefix = get_package_share_directory("depthai_ros_driver")
     def get_vslam_params(drone_ns, db_name):
@@ -23,29 +23,28 @@ def generate_launch_description():
             'odom_frame_id': f'{drone_ns}/odom',
             
 
-            'subscribe_rgbd': True,
-            'subscribe_depth': False,
+            'subscribe_rgbd': False,
+            'subscribe_depth': True,
             'subscribe_odom': True,
             'subscribe_imu': True,
-            'approx_sync': False,
-            'queue_size': 200,
-            'sync_queue_size': 100,
+            'approx_sync': True,
+            'queue_size': 20,
+            'sync_queue_size': 10,
 
-            'Odom/ResetCountdown': '1',     
-            'Vis/MinInliers': '15',
+            'Vis/MinInliers': '2',
             'Vis/InlierDistance': '0.1',        
-            'Odom/Strategy': '0',           
             'wait_for_transform': 2.0,
             'Optimizer/GravitySigma': '0',
-            'wait_imu_to_init': True,
+            'wait_imu_to_init': False,
             'publish_tf': True,
             # 'Vis/FeatureType': '10',
             'Kp/DetectorStrategy': '10',
 
-            'Vis/EstimationType': '1',
             'RGBD/AngularUpdate': '0.01',
             'RGBD/LinearUpdate': '0.01',
             
+            'Odom/Strategy': '1',
+            'Vis/MaxFeatures': '300',
             
             'Grid/RayTracing' : 'true',
             'NormalsSegmentation': 'true',
@@ -66,47 +65,48 @@ def generate_launch_description():
        #     output="screen",
        # ),
 
-        #IncludeLaunchDescription(
-        #    PythonLaunchDescriptionSource([
-        #        os.path.join(get_package_share_directory('realsense2_camera'), 'launch', 'rs_launch.py')
-        #   ]),
-        #    launch_arguments={
-        #        'align_depth.enable': 'true',       
-        #        'pointcloud.enable': 'false',       
-        #        'depth_module.profile': '640x480x15', 
-        #        'rgb_camera.profile': '640x480x15'
-        #    }.items()
-       # ),
-       # Node(
-       #     package='topic_tools',
-       #     executable='relay',
-       #     name='relay_camera_info',
-       #     arguments=[
-       #         '/camera/camera/aligned_depth_to_color/camera_info',
-       #         '/x500_drone_0/rgb/camera_info'
-       #  ],
-       # output='screen'
-       # ),
-       # Node(
-       #     package='topic_tools',
-       #     executable='relay',
-       #     name='relay_depth_image',
-       #     arguments=[
-       #         '/camera/camera/aligned_depth_to_color/image_raw',
-       #         '/x500_drone_0/depth/image'
-       # ],
-       # output='screen'
-       # ),
-       # Node(
-       #     package='topic_tools',
-       #     executable='relay',
-       #     name='relay_rgb_image',
-       #     arguments=[
-       #         '/camera/camera/color/image_raw',
-       #         '/x500_drone_0/rgb/image'
-       # ],
-       # output='screen'
-       #),
+        IncludeLaunchDescription(
+            PythonLaunchDescriptionSource([
+                os.path.join(get_package_share_directory('realsense2_camera'), 'launch', 'rs_launch.py')
+           ]),
+            launch_arguments={
+                'align_depth.enable': 'true',
+                'enable_sync': 'true',
+                'pointcloud.enable': 'false',       
+                'depth_module.depth_profile': '424x240x15', 
+                'rgb_camera.color_profile': '424x240x15',
+            }.items()
+        ),
+        Node(
+            package='topic_tools',
+            executable='relay',
+            name='relay_camera_info',
+            arguments=[
+                '/camera/camera/color/camera_info',
+                '/x500_drone_0/rgb/camera_info'
+         ],
+        output='screen'
+        ),
+        Node(
+            package='topic_tools',
+            executable='relay',
+            name='relay_depth_image',
+            arguments=[
+                '/camera/camera/aligned_depth_to_color/image_raw',
+                '/x500_drone_0/depth/image'
+        ],
+        output='screen'
+        ),
+        Node(
+            package='topic_tools',
+            executable='relay',
+            name='relay_rgb_image',
+            arguments=[
+                '/camera/camera/color/image_raw',
+                '/x500_drone_0/rgb/image'
+        ],
+        output='screen'
+       ),
 
        # Node(
        #     package='depthai_ros_driver',
@@ -129,18 +129,18 @@ def generate_launch_description():
        #         "params_file": os.path.expanduser("~/oak_run.yaml"),
        #     }.items(),
        # ),
-        Node(
-            package='image_proc',
-            executable='rectify_node',
-            name='rectify_color_image',
-            output='screen',
-            parameters=[{'use_sim_time': False}],
-            remappings=[
-                ('image',       '/x500_drone_0/rgb/image_raw'),
-                ('camera_info', '/x500_drone_0/rgb/camera_info'),
-                ('image_rect',  '/x500_drone_0/rgb/image') # This is your new flattened topic!
-            ],
-        ),
+       # Node(
+       #     package='image_proc',
+       #     executable='rectify_node',
+       #     name='rectify_color_image',
+       #     output='screen',
+       #     parameters=[{'use_sim_time': False}],
+       #     remappings=[
+       #         ('image',       '/x500_drone_0/rgb/image_raw'),
+       #         ('camera_info', '/x500_drone_0/rgb/camera_info'),
+       #         ('image_rect',  '/x500_drone_0/rgb/image') # This is your new flattened topic!
+       #     ],
+       # ),
           
 
      #Drone 0
@@ -148,10 +148,10 @@ def generate_launch_description():
                 arguments=['0', '0', '0', '0', '0', '0', 'x500_drone_0/base_link', 'x500_drone_0/imu_sensor']),
         
         Node(package='tf2_ros', executable='static_transform_publisher',
-                arguments=['0.12', '0.03', '0.242', '0', '0', '0', 'x500_drone_0/base_link', 'x500_drone_0/camera_link']),
+                arguments=['0.12', '0.03', '0.242', '0', '0', '0', 'x500_drone_0/base_link', 'camera_link']),
 
-        Node(package='tf2_ros', executable='static_transform_publisher',
-                arguments=['0', '0', '0', '-1.5708', '0', '-1.5708', 'x500_drone_0/camera_link', 'camera_rgb_camera_optical_frame']),
+       # Node(package='tf2_ros', executable='static_transform_publisher',
+       #         arguments=['0', '0', '0', '-1.5708', '0', '-1.5708', 'x500_drone_0/camera_link', 'camera_rgb_camera_optical_frame']),
 
         Node(
             package='px4_ros_bridge',
@@ -237,9 +237,8 @@ def generate_launch_description():
                     parameters=[{
                         "use_sim_time": False,
                         "approx_sync": False,
-                        "approx_sync_max_interval": 0.04,
-                        "queue_size": 200,
-                        "sync_queue_size": 100,
+                        "queue_size": 20,
+                        "sync_queue_size": 10,
                     }],
                     remappings=[
                         ("rgb/image", "/x500_drone_0/rgb/image"),
@@ -294,7 +293,7 @@ def generate_launch_description():
                     parameters=[{
                         'voxel_size': 0.1,
                         'use_sim_time': False,
-                        'approx_sync': True,
+                        'approx_sync': False,
                                  }],
                     remappings=[('depth/image', '/x500_drone_0/depth/image'),
                         ('depth/camera_info', '/x500_drone_0/rgb/camera_info'),
@@ -304,7 +303,7 @@ def generate_launch_description():
         ),
 
         TimerAction(
-            period=45.0,
+            period=30.0,
             actions=[
                 Node(
                     package='rtabmap_costmap_plugins',
@@ -323,7 +322,7 @@ def generate_launch_description():
                         {"odom_topic": "/x500_drone_0/odom"},
                         {"vehicle_odometry_topic": "/fmu/in/vehicle_visual_odometry"},
                         {"map_frame_id": "x500_drone_0/map"},   
-                        {"repeat_odom": True}      
+                        {"repeat_odom": False}      
                     ],
                     output='screen'
                 ),

@@ -367,7 +367,7 @@ class AutonomousExplorer(Node):
             ("k_rep", 0.5),
             ("influence_radius", 0.75),
             ("pf_update_rate", 10.0),        # Hz
-            ("max_speed", 0.1),
+            ("max_speed", 0.2),
             ("waypoint_threshold", 0.3),
 
             ("stuck_time_threshold", 3.0),   # seconds - time to detect astuck
@@ -387,6 +387,9 @@ class AutonomousExplorer(Node):
             ("other_drone_init_x", 0.0),
             ("other_drone_init_y", 0.0),
             ("frontier_search_radii", [ 2.5, 5.0, 10.0, -1.0]),
+            
+            ("partition_rotation_step", 15.0),
+            ("partition_max_rotation",  150.0),
 
             ("cbf_d_safe",            0.35),   # obstacle standoff (m)
             ("cbf_d_stop",            0.35),   # frontier standoff (m)
@@ -448,6 +451,10 @@ class AutonomousExplorer(Node):
         self.other_drone_init_x = self.get_parameter("other_drone_init_x").value
         self.other_drone_init_y = self.get_parameter("other_drone_init_y").value
 
+        self._partition_rotation_deg  = 0.0
+        self._partition_rotation_step = self.get_parameter("partition_rotation_step").value
+        self._partition_max_rotation  = self.get_parameter("partition_max_rotation").value
+        
         raw_radii = self.get_parameter("frontier_search_radii").value
         self.frontier_search_radii = [float(r) for r in raw_radii]
         
@@ -544,6 +551,8 @@ class AutonomousExplorer(Node):
         self.apf_path_pub = self.create_publisher(Path, "apf_path", qos_path)
         self.waypoints_pub = self.create_publisher(PoseArray, "rrt_waypoints", qos_path)
         self.apf_markers_pub = self.create_publisher(MarkerArray, "apf_forces", 10)
+        self.partition_viz_pub = self.create_publisher(MarkerArray, "partition_viz", 10)
+
 
         #DATA logging
         # Coverage
@@ -584,6 +593,12 @@ class AutonomousExplorer(Node):
         self.metrics_cbf_infeasible_pub = self.create_publisher(Int32,   "metrics/cbf_infeasible_count", 10)
         self.metrics_cbf_delta_pub      = self.create_publisher(Float32, "metrics/cbf_soft_delta",       10)
         self.metrics_cbf_speed_clip_pub = self.create_publisher(Bool,    "metrics/cbf_speed_clipped",    10)
+        
+        self.metrics_drone_dist_pub       = self.create_publisher(Float32, "metrics/other_drone_distance_m",    10)
+        self.metrics_drone_rep_pub        = self.create_publisher(Float32, "metrics/other_drone_repulsion_mag", 10)
+        self.metrics_drone_active_pub     = self.create_publisher(Bool,    "metrics/other_drone_repulsion_active", 10)
+        self.metrics_drone_in_radius_pub  = self.create_publisher(Bool,    "metrics/other_drone_in_safety_radius", 10)
+        
         self.cbf_viz_pub = self.create_publisher(MarkerArray, "cbf_viz", 10)
         
         self.frontier_timer = self.create_timer(1.0 / self.frontier_rate, self.frontier_search_loop)
@@ -595,6 +610,11 @@ class AutonomousExplorer(Node):
         self.get_logger().info("   Frontier Detection: ON")
         self.get_logger().info("   RRT* Planning: ON")
         self.get_logger().info("   Potential Field Control: ON")
+        self.get_logger().info(
+            f"   Map partitioning: ON  "
+            f"(step={self._partition_rotation_step:.0f}°, "
+            f"max={self._partition_max_rotation:.0f}°)"
+        )
         self.get_logger().info(f"   Drone radius (inflation): {self.drone_radius:.2f} m")
         self.get_logger().info(f"   Other drone pose topic:  {self.other_drone_pose_topic}")
         self.get_logger().info(f"   Drone repulsion gain:    {self.k_rep_drone}")
@@ -705,6 +725,12 @@ class AutonomousExplorer(Node):
     def other_drone_pose_cb(self, msg: PoseWithCovarianceStamped):
         self.other_drone_x = msg.pose.pose.position.x + self.other_drone_init_x
         self.other_drone_y = msg.pose.pose.position.y + self.other_drone_init_y
+        dist = math.hypot(
+            self.current_x - self.other_drone_x,
+            self.current_y - self.other_drone_y,
+        )
+        msg_f = Float32(); msg_f.data = float(dist)
+        self.metrics_drone_dist_pub.publish(msg_f)
         self.get_logger().debug(
             f"Other drone at ({self.other_drone_x:.2f}, {self.other_drone_y:.2f}) "
             f"[raw=({msg.pose.pose.position.x:.2f}, {msg.pose.pose.position.y:.2f}) "
@@ -818,6 +844,7 @@ class AutonomousExplorer(Node):
         for radius in self.frontier_search_radii:
             frontiers = self.find_frontiers(search_radius=radius if radius > 0 else None)
 
+            self._publish_partition_viz()
             if frontiers:
                 self.get_logger().info(
                     f"Frontiers found at radius: "
@@ -849,6 +876,10 @@ class AutonomousExplorer(Node):
             
             # Trigger immediate replan
             self.rrt_replan()
+
+            if self._partition_rotation_deg != 0.0:
+                self._partition_rotation_deg = 0.0
+                self.get_logger().info("Partition rotation reset to 0° (frontier found)")
     
     def find_frontiers(self, search_radius=None):
         """
@@ -887,7 +918,7 @@ class AutonomousExplorer(Node):
         labeled, num_features = ndimage.label(frontier_mask)
         
         # 4. Extract frontier clusters
-        frontiers = []
+        all_clusters = []
         
         for label_id in range(1, num_features + 1):
             cluster = np.argwhere(labeled == label_id)
@@ -903,10 +934,29 @@ class AutonomousExplorer(Node):
                 world_points.append((wx, wy))
             
             # Store cluster
-            frontiers.append(world_points)
+            all_clusters.append(world_points)
+        partitioned_clusters = []
+        for cluster in all_clusters:
+            cx_w = sum(p[0] for p in cluster) / len(cluster)
+            cy_w = sum(p[1] for p in cluster) / len(cluster)
+            if self._is_on_my_side(cx_w, cy_w):
+                partitioned_clusters.append(cluster)
+
+        n_all  = len(all_clusters)
+        n_kept = len(partitioned_clusters)
+
+        if n_all > 0 and n_kept == 0:
+            self.get_logger().warn(
+                f"All {n_all} frontier(s) on other drone's side — rotating partition"
+            )
+            self._rotate_partition()
+            return []
         
-        self.get_logger().info(f"Found {len(frontiers)} frontier clusters")
-        return frontiers
+        self.get_logger().info(
+            f"Frontiers: {n_all} total, {n_kept} on my side"
+        )       
+        return partitioned_clusters
+
     
     def select_best_frontier(self, frontiers):
         """
@@ -985,7 +1035,54 @@ class AutonomousExplorer(Node):
             if dist < threshold:
                 return True
         return False
+    
+    def _get_partition_normal(self):
+        ox = self.other_drone_x
+        oy = self.other_drone_y
+        if ox is None or oy is None:
+            return None, None
 
+        mx = (self.current_x + ox) / 2.0
+        my = (self.current_y + oy) / 2.0
+
+        dx = ox - self.current_x
+        dy = oy - self.current_y
+        dist = math.hypot(dx, dy)
+        if dist < 1e-4:
+            return None, None
+
+        nx0 = -dx / dist
+        ny0 = -dy / dist
+
+        theta = math.radians(self._partition_rotation_deg)
+        cos_t = math.cos(theta)
+        sin_t = math.sin(theta)
+        nx = cos_t * nx0 - sin_t * ny0
+        ny = sin_t * nx0 + cos_t * ny0
+
+        return (mx, my), (nx, ny)
+    
+    def _is_on_my_side(self, cx, cy):
+        result = self._get_partition_normal()
+        if result[0] is None:
+            return True
+
+        (mx, my), (nx, ny) = result
+        dot = (cx - mx) * nx + (cy - my) * ny
+        return dot >= 0.0
+    
+    def _rotate_partition(self):
+        self._partition_rotation_deg += self._partition_rotation_step
+
+        if self._partition_rotation_deg > self._partition_max_rotation:
+            self._partition_rotation_deg = 0.0
+            self.get_logger().info("Partition rotation reset to 0° (max rotation reached)")
+        else:
+            self.get_logger().info(
+                f"Partition rotated to {self._partition_rotation_deg:.0f}°  "
+                f"(step={self._partition_rotation_step:.0f}°, "
+                f"max={self._partition_max_rotation:.0f}°)"
+            )
 
     # ==================== RRT* GLOBAL PLANNER ====================
     
@@ -1159,7 +1256,8 @@ class AutonomousExplorer(Node):
         return path
     
     def sample_free(self):
-        if self._free_cells_cache is None or len(self._free_cells_cache) == 0:
+        free = self._free_cells_cache
+        if free is None or len(free) == 0:
             return (self.current_x, self.current_y)
         idx = random.randint(0, len(self._free_cells_cache) - 1)
         gy, gx = self._free_cells_cache[idx]
@@ -1511,8 +1609,21 @@ class AutonomousExplorer(Node):
         dy = self.current_y - self.other_drone_y
         dist = max(math.hypot(dx, dy), 0.05)
         
+        msg_f = Float32(); msg_f.data = float(dist)
+        self.metrics_drone_dist_pub.publish(msg_f)
+        
         if dist >= self.other_drone_safety_radius:
+
+            msg_b = Bool(); msg_b.data = False
+            self.metrics_drone_in_radius_pub.publish(msg_b)
+            msg_f = Float32(); msg_f.data = 0.0
+            self.metrics_drone_rep_pub.publish(msg_f)
+            msg_b = Bool(); msg_b.data = False
+            self.metrics_drone_active_pub.publish(msg_b)
             return (0.0, 0.0)
+        
+        msg_b = Bool(); msg_b.data = True
+        self.metrics_drone_in_radius_pub.publish(msg_b)
         
         d0 = self.other_drone_safety_radius
         scalar = self.k_rep_drone * (1.0 / dist - 1.0 / d0) / (dist ** 2)
@@ -1532,6 +1643,12 @@ class AutonomousExplorer(Node):
             f"[DRONE PROXIMITY] dist={dist:.2f} m  repulsion=({fx:.2f}, {fy:.2f})",
             throttle_duration_sec=1.0,
         )
+
+        msg_f = Float32(); msg_f.data = float(math.hypot(fx, fy))
+        self.metrics_drone_rep_pub.publish(msg_f)
+        msg_b = Bool(); msg_b.data = True
+        self.metrics_drone_active_pub.publish(msg_b)
+
         return (fx, fy)
         # ==================== VISUALIZATION ====================
     
@@ -1965,6 +2082,72 @@ class AutonomousExplorer(Node):
                 markers.markers.append(m)
 
             self.cbf_viz_pub.publish(markers)
+    def _publish_partition_viz(self):
+        if self.map_info is None:
+            return
+
+        result = self._get_partition_normal()
+        if result[0] is None:
+            return
+
+        (mx, my), (nx, ny) = result
+        lx, ly = -ny, nx
+        half_len = 20.0
+
+        markers = MarkerArray()
+        now = self.get_clock().now().to_msg()
+
+        # Line along the partition
+        m = Marker()
+        m.header.frame_id = self.map_frame
+        m.header.stamp = now
+        m.ns = "partition"
+        m.id = 0
+        m.type = Marker.LINE_STRIP
+        m.action = Marker.ADD
+        m.scale.x = 0.08
+        p1 = Point(); p1.x = mx - lx * half_len; p1.y = my - ly * half_len; p1.z = 0.5
+        p2 = Point(); p2.x = mx + lx * half_len; p2.y = my + ly * half_len; p2.z = 0.5
+        m.points = [p1, p2]
+        if self._partition_rotation_deg < 1e-3:
+            m.color = ColorRGBA(r=0.0, g=1.0, b=0.2, a=0.8)
+        else:
+            t = min(self._partition_rotation_deg / self._partition_max_rotation, 1.0)
+            m.color = ColorRGBA(r=t, g=1.0 - t * 0.5, b=0.0, a=0.8)
+        markers.markers.append(m)
+
+        # Arrow pointing toward this drone's side
+        m2 = Marker()
+        m2.header.frame_id = self.map_frame
+        m2.header.stamp = now
+        m2.ns = "partition"
+        m2.id = 1
+        m2.type = Marker.ARROW
+        m2.action = Marker.ADD
+        arrow_len = 1.5
+        m2.points = [
+            Point(x=mx, y=my, z=0.5),
+            Point(x=mx + nx * arrow_len, y=my + ny * arrow_len, z=0.5),
+        ]
+        m2.scale.x = 0.06; m2.scale.y = 0.12; m2.scale.z = 0.10
+        m2.color = ColorRGBA(r=0.0, g=0.8, b=1.0, a=0.9)
+        markers.markers.append(m2)
+
+        # Text showing rotation angle
+        m3 = Marker()
+        m3.header.frame_id = self.map_frame
+        m3.header.stamp = now
+        m3.ns = "partition"
+        m3.id = 2
+        m3.type = Marker.TEXT_VIEW_FACING
+        m3.action = Marker.ADD
+        m3.pose.position.x = mx; m3.pose.position.y = my; m3.pose.position.z = 1.0
+        m3.scale.z = 0.20
+        m3.text = f"partition\nrot={self._partition_rotation_deg:.0f}°"
+        m3.color = ColorRGBA(r=1.0, g=1.0, b=1.0, a=1.0)
+        markers.markers.append(m3)
+
+        self.partition_viz_pub.publish(markers)
         
 def main():
 
