@@ -374,8 +374,8 @@ class AutonomousExplorer(Node):
             ("stuck_distance_threshold", 0.05),  # meters - min movement expected
                     
             # --- EXPLORATION STRATEGY ---
-            ("frontier_weight_size", 1.0),   # Prefer larger frontiers
-            ("frontier_weight_distance", 2.0), # Prefer closer frontiers
+            ("frontier_weight_size", 3.0),   # Prefer larger frontiers
+            ("frontier_weight_distance", 0.5), # Prefer closer frontiers
 
             #-----COSTMAP/ DRONE SAFETY---------
             ("drone_radius", 0.25),
@@ -386,7 +386,7 @@ class AutonomousExplorer(Node):
             ("k_rep_drone", 200.0),
             ("other_drone_init_x", 0.0),
             ("other_drone_init_y", 0.0),
-            ("frontier_search_radii", [ 2.5, 5.0, 10.0, -1.0]),
+            ("frontier_search_radii", [ 5.0, 10.0, -1.0]),
 
             ("cbf_d_safe",            0.35),   # obstacle standoff (m)
             ("cbf_d_stop",            0.35),   # frontier standoff (m)
@@ -399,7 +399,7 @@ class AutonomousExplorer(Node):
         
         self.map_frame = self.get_parameter("map_frame").value
         #Altitude
-        self.takeoff_altitude = 1.3  # meters
+        self.takeoff_altitude = 0.8  # meters
         self.altitude_ready = False
         self.current_z = 0.0
         # Frontier params
@@ -613,7 +613,7 @@ class AutonomousExplorer(Node):
                 "Waiting for takeoff... current altitude: %.2f m" % -self.current_z,
                 throttle_duration_sec=2.0
             )
-            if (-self.current_z) >= self.takeoff_altitude *0.95:
+            if (-self.current_z) >= self.takeoff_altitude *0.85:
                 self.altitude_ready = True
                 self.last_position = (self.current_x, self.current_y)  
                 self._exploration_start_time = self.get_clock().now() 
@@ -813,27 +813,35 @@ class AutonomousExplorer(Node):
             if dist > 1.0:  # Still navigating to current frontier
                 return
         
-        # Find frontiers
+        best_frontier = None
         frontiers = []
         for radius in self.frontier_search_radii:
             frontiers = self.find_frontiers(search_radius=radius if radius > 0 else None)
-
-            if frontiers:
-                self.get_logger().info(
-                    f"Frontiers found at radius: "
+            if not frontiers:
+                continue
+            self.get_logger().info(
+                f"Frontiers found at radius: "
+                f"{'full map' if radius < 0 else f'{radius:.1f} m'}"
+            )
+            best_frontier = self.select_best_frontier(frontiers)
+            if best_frontier is not None:
+                break
+            self.get_logger().warn(
+                    f"All frontiers at "
                     f"{'full map' if radius < 0 else f'{radius:.1f} m'}"
-                )
-                break        
+                    f" rejected — expanding search radius"
+            )
 
         msg_i = Int32(); msg_i.data = len(frontiers)
         self.metrics_frontier_count_pub.publish(msg_i)
+
         if not frontiers:
             self.get_logger().warn("No frontiers found!")
             return
-        
-        # Select best frontier
-        best_frontier = self.select_best_frontier(frontiers)
-        
+        if best_frontier is None:
+            self.get_logger().warn("Frontiers found but all rejected at all radii!")
+            return
+
         if best_frontier:
             self.goal_x, self.goal_y = best_frontier
             self.autonomous_mode = True
@@ -940,6 +948,8 @@ class AutonomousExplorer(Node):
             
             # Distance score (closer = better)
             distance = math.hypot(centroid_x - self.current_x, centroid_y - self.current_y)
+            if distance < 1.0:  
+                continue
             distance_score = 1.0 / (distance + 0.1)  # Avoid division by zero
             
             # Combined score

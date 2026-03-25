@@ -31,12 +31,11 @@ def generate_launch_description():
             'queue_size': 20,
             'sync_queue_size': 10,
 
-            'Vis/MinInliers': '2',
+            'Vis/MinInliers': '15',
             'Vis/InlierDistance': '0.1',        
             'wait_for_transform': 2.0,
             'Optimizer/GravitySigma': '0',
             'wait_imu_to_init': False,
-            'publish_tf': True,
             # 'Vis/FeatureType': '10',
             'Kp/DetectorStrategy': '10',
 
@@ -48,8 +47,8 @@ def generate_launch_description():
             
             'Grid/RayTracing' : 'true',
             'NormalsSegmentation': 'true',
-            'Grid/MaxGroundHeight': '1.15', 
-            'Grid/MaxObstacleHeight': '1.75',
+            'Grid/MaxGroundHeight': '0.5', 
+            'Grid/MaxObstacleHeight': '1.10',
             'Grid/NoiseFilteringRadius': '0.15',
             'Grid/NoiseFilteringMinNeighbors': '7',
             
