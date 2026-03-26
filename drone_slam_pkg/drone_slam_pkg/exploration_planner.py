@@ -351,7 +351,7 @@ class AutonomousExplorer(Node):
             ("min_frontier_size", 1),        # Min cells in frontier cluster
             ("frontier_search_rate", 1.0),   # Hz
             ("exploration_complete_threshold", 0.95), # 95% map known
-            ("frontier_weight_approach", 2.0),  
+            ("frontier_weight_approach", 0.2),  
             ("map_frame", "map"),
             
             # --- RRT* PARAMETERS ---
@@ -375,7 +375,7 @@ class AutonomousExplorer(Node):
                     
             # --- EXPLORATION STRATEGY ---
             ("frontier_weight_size", 3.0),   # Prefer larger frontiers
-            ("frontier_weight_distance", 0.5), # Prefer closer frontiers
+            ("frontier_weight_distance", 0.2), # Prefer closer frontiers
 
             #-----COSTMAP/ DRONE SAFETY---------
             ("drone_radius", 0.25),
@@ -944,17 +944,31 @@ class AutonomousExplorer(Node):
                 continue
             
             # Size score (larger = more info gain)
-            size_score = len(cluster)
             
             # Distance score (closer = better)
             distance = math.hypot(centroid_x - self.current_x, centroid_y - self.current_y)
-            if distance < 1.0:  
+            if distance < 1.0:
                 continue
-            distance_score = 1.0 / (distance + 0.1)  # Avoid division by zero
-            
-            # Combined score
+            size_score = math.log(len(cluster) + 1)
+            distance_score = 1.0 / (distance + 0.1) 
             approach_score = self.score_approach_corridor(self.current_x, self.current_y, centroid_x, centroid_y)
-            score = (self.w_size * size_score) + (self.w_dist * distance_score * 100) + (self.w_approach * approach_score * 100)            
+            if len(cluster) >= 50:
+                w_s, w_d, w_a = 8.0, 0.1, 0.1
+            elif distance < 2.0:
+                w_s, w_d, w_a = 1.0, 0.5, 0.3
+            else:
+                w_s, w_d, w_a = self.w_size, self.w_dist, self.w_approach
+            
+            
+            score = (w_s * size_score) + (w_d* distance_score * 100) + (w_a * approach_score * 100)            
+            self.get_logger().info(
+                f"Frontier candidate: dist={distance:.2f}m "
+                f"size={len(cluster)} "
+                f"size_score={w_s * size_score:.2f} "
+                f"dist_score={w_d * distance_score * 100:.2f} "
+                f"approach_score={w_a * approach_score * 100:.2f} "
+                f"total={score:.2f}"
+            )
             if score > best_score:
                 best_score = score
                 best_centroid = (centroid_x, centroid_y)

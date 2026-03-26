@@ -41,7 +41,7 @@ def generate_launch_description():
             output='screen',
             parameters=[
                 {
-                    "log_dir": os.path.expanduser("~/exploration_logs"),
+                    "log_dir": os.path.expanduser("~/hardware_exploration_logs"),
                     "drone_namespace": "x500_drone_0",
                 }
             ],
