@@ -356,7 +356,7 @@ class AutonomousExplorer(Node):
             
             # --- RRT* PARAMETERS ---
             ("rrt_max_iter", 3000),
-            ("rrt_step_size", 1.0),
+            ("rrt_step_size", 0.5),
             ("rrt_goal_sample_rate", 0.15),
             ("rrt_search_radius", 3.0),
             ("rrt_replan_rate", 0.5),        # Hz

@@ -106,8 +106,8 @@ class ExplorationLogger(Node):
         self._cbf_slack_samples  = []
         self._cbf_phi1_samples   = []
         self._cbf_phi2_samples   = []
-        self._cbf1_active_count  = 0   # ticks where c1 fired
-        self._cbf2_active_count  = 0   # ticks where c2 fired
+        self._cbf1_active_count  = 0   
+        self._cbf2_active_count  = 0   
         self._cbf_speed_clip_count = 0
         self._cbf_total_ticks    = 0  
 
@@ -133,7 +133,7 @@ class ExplorationLogger(Node):
         )
         qos_reliable = QoSProfile(
             reliability=ReliabilityPolicy.RELIABLE,
-            durability=DurabilityPolicy.TRANSIENT_LOCAL,
+            durability=DurabilityPolicy.VOLATILE,
             history=HistoryPolicy.KEEP_LAST,
             depth=1,
         )
