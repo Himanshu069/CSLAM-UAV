@@ -56,7 +56,7 @@ def build_sdf_obstacle(map_data: np.ndarray, resolution: float) -> np.ndarray:
       phi = 0  on obstacle surface
     Satisfies Eikonal ||grad phi|| = 1 a.e. (Rademacher's theorem).
     """
-    obstacle_mask = (map_data >= 50)
+    obstacle_mask = (map_data >= 65)
     d_out = ndimage.distance_transform_edt(~obstacle_mask) * resolution
     d_in  = ndimage.distance_transform_edt( obstacle_mask) * resolution
     return np.where(obstacle_mask, -d_in, d_out)
@@ -370,12 +370,13 @@ class AutonomousExplorer(Node):
             ("max_speed", 0.1),
             ("waypoint_threshold", 0.3),
 
-            ("stuck_time_threshold", 3.0),   # seconds - time to detect astuck
+            ("stuck_time_threshold", 2.0),   # seconds - time to detect astuck
             ("stuck_distance_threshold", 0.05),  # meters - min movement expected
                     
             # --- EXPLORATION STRATEGY ---
-            ("frontier_weight_size", 3.0),   # Prefer larger frontiers
+            ("frontier_weight_size", 1.0),   # Prefer larger frontiers
             ("frontier_weight_distance", 0.2), # Prefer closer frontiers
+            ("ig_sensor_range", 3.0),   #
 
             #-----COSTMAP/ DRONE SAFETY---------
             ("drone_radius", 0.25),
@@ -391,7 +392,7 @@ class AutonomousExplorer(Node):
             ("cbf_d_safe",            0.35),   # obstacle standoff (m)
             ("cbf_d_stop",            0.35),   # frontier standoff (m)
             ("cbf_a1",                2.0),    # tanh sharpness — obstacle
-            ("cbf_a2",                1.5),    # tanh sharpness — frontier
+            ("cbf_a2",                2.0),    # tanh sharpness — frontier
             ("cbf_gamma1",            1.5),    # CBF gain — obstacle
             ("cbf_gamma2",            1.0),    # CBF gain — frontier
             ("cbf_min_cluster_cells", 25),     # min unknown cluster size
@@ -461,6 +462,14 @@ class AutonomousExplorer(Node):
             v_max             = self.max_speed,
             min_cluster_cells = self.get_parameter("cbf_min_cluster_cells").value,
         )
+        self._gamma2_max = self.get_parameter("cbf_gamma2").value
+        self._gamma2_min = 0.20
+        self._adaptive_gamma2_value = self.get_parameter("cbf_gamma2").value  # fallback
+        self.metrics_cbf_gamma2_pub = self.create_publisher(
+            Float32, "metrics/cbf_gamma2_adaptive", 10)
+        self.get_logger().info(
+            f"   Adaptive γ₂ range: [{self._gamma2_min:.2f}, {self._gamma2_max:.2f}]"
+        )
         self._cbf_infeasible_count = 0
          
         self.inflated_map = None
@@ -507,6 +516,8 @@ class AutonomousExplorer(Node):
         self._last_explored_area = 0.0
         self._last_coverage_time = self.get_clock().now()
         self._running_min_clearance = float('inf')
+
+        self.ig_sensor_range = self.get_parameter("ig_sensor_range").value
 
         qos_map = QoSProfile(
             reliability=ReliabilityPolicy.RELIABLE,
@@ -584,6 +595,7 @@ class AutonomousExplorer(Node):
         self.metrics_cbf_infeasible_pub = self.create_publisher(Int32,   "metrics/cbf_infeasible_count", 10)
         self.metrics_cbf_delta_pub      = self.create_publisher(Float32, "metrics/cbf_soft_delta",       10)
         self.metrics_cbf_speed_clip_pub = self.create_publisher(Bool,    "metrics/cbf_speed_clipped",    10)
+        self.metrics_cbf_solve_time_pub = self.create_publisher(Float32, "metrics/cbf_solve_time_us", 10)
         self.cbf_viz_pub = self.create_publisher(MarkerArray, "cbf_viz", 10)
         
         self.frontier_timer = self.create_timer(1.0 / self.frontier_rate, self.frontier_search_loop)
@@ -669,7 +681,45 @@ class AutonomousExplorer(Node):
         # EDT returns distance in *cells*; multiply by resolution for metres
         dist_cells = ndimage.distance_transform_edt(~obstacle_mask)
         self.distance_field = dist_cells * self.map_info.resolution  
+    def _update_adaptive_gamma2(self):
+        """
+        Recompute γ₂ from current map uncertainty density.
+        Called inside map_cb after sdf_unk is rebuilt.
 
+        ρ(x) = |unknown cells in sensor disc| / |disc area in cells|
+        γ₂   = γ_min + (γ_max − γ_min) · (1 − ρ)
+
+        High ρ (lots of unknown nearby) → γ_min  (relax, let drone approach)
+        Low  ρ (mostly mapped nearby)   → γ_max  (tighten, no value in pushing)
+        """
+        if not self.altitude_ready:          # ← add this guard
+            return
+        gamma_min = self._gamma2_min
+        gamma_max = self._gamma2_max  # declared max
+
+        gx, gy = self.world_to_grid(self.current_x, self.current_y)
+        if gx is None or self.map_data is None:
+            return  # no pose yet — keep last cached value
+
+        ig = self.information_gain(gx, gy, self.ig_sensor_range)
+
+        res     = self.map_info.resolution
+        r_cells = int(math.ceil(self.ig_sensor_range / res))
+        disc_area = math.pi * float(r_cells ** 2)          # cells, float
+        rho = min(ig / max(disc_area, 1.0), 1.0)   # clamp to [0, 1]
+
+        gamma2 = gamma_min + (gamma_max - gamma_min) * (1.0 - rho)
+        self._adaptive_gamma2_value = gamma2
+        self.cbf.gamma2 = gamma2                    # hot-patch the live CBF object
+
+        msg = Float32(); msg.data = float(gamma2)
+        self.metrics_cbf_gamma2_pub.publish(msg)
+
+        self.get_logger().info(
+            f"Adaptive γ₂={gamma2:.3f}  ρ={rho:.3f}  "
+            f"IG={ig:.0f} cells  disc={disc_area:.0f} cells",
+            throttle_duration_sec=2.0)
+        
     def map_cb(self, msg):
         self.map_info = msg.info
         raw = np.array(msg.data, dtype=np.int8).reshape(
@@ -689,14 +739,14 @@ class AutonomousExplorer(Node):
         self.sdf_obs = build_sdf_obstacle(raw, msg.info.resolution)
         self.sdf_unk = build_sdf_frontier(raw, msg.info.resolution,
                                            self.cbf.min_cluster_cells)
-        
+        self._update_adaptive_gamma2()          
         self._publish_inflated_map(msg)
     
     def goal_cb(self, msg):
         self.goal_x = msg.pose.position.x
         self.goal_y = msg.pose.position.y
         self.current_waypoint_idx = 0
-        self.autonomous_mode = False # Disable auto-exploration
+        self.autonomous_mode = False 
         # self.motion_state = "FORWARD"
         self.get_logger().info(f"Manual Goal Set: ({self.goal_x:.1f}, {self.goal_y:.1f})")
         self.get_logger().info(" Autonomous exploration PAUSED")
@@ -944,31 +994,15 @@ class AutonomousExplorer(Node):
                 continue
             
             # Size score (larger = more info gain)
+            size_score = len(cluster)
             
             # Distance score (closer = better)
             distance = math.hypot(centroid_x - self.current_x, centroid_y - self.current_y)
-            if distance < 1.0:
-                continue
-            size_score = math.log(len(cluster) + 1)
-            distance_score = 1.0 / (distance + 0.1) 
+            distance_score = 1.0 / (distance + 0.1)  # Avoid division by zero
+            
+            # Combined score
             approach_score = self.score_approach_corridor(self.current_x, self.current_y, centroid_x, centroid_y)
-            if len(cluster) >= 50:
-                w_s, w_d, w_a = 8.0, 0.1, 0.1
-            elif distance < 2.0:
-                w_s, w_d, w_a = 1.0, 0.5, 0.3
-            else:
-                w_s, w_d, w_a = self.w_size, self.w_dist, self.w_approach
-            
-            
-            score = (w_s * size_score) + (w_d* distance_score * 100) + (w_a * approach_score * 100)            
-            self.get_logger().info(
-                f"Frontier candidate: dist={distance:.2f}m "
-                f"size={len(cluster)} "
-                f"size_score={w_s * size_score:.2f} "
-                f"dist_score={w_d * distance_score * 100:.2f} "
-                f"approach_score={w_a * approach_score * 100:.2f} "
-                f"total={score:.2f}"
-            )
+            score = (self.w_size * size_score) + (self.w_dist * distance_score * 100) + (self.w_approach * approach_score * 100)            
             if score > best_score:
                 best_score = score
                 best_centroid = (centroid_x, centroid_y)
@@ -1130,8 +1164,10 @@ class AutonomousExplorer(Node):
             new_node = RRTNode(new_x, new_y)
             
             # Find nearby nodes
-            nearby = [n for n in nodes if math.hypot(n.x - new_x, n.y - new_y) < self.rrt_radius]
-            
+            gamma = 3.0
+            radius = gamma * math.sqrt(math.log(len(nodes) + 1) / (len(nodes) + 1))
+            radius = max(radius, self.rrt_step_size * 1.5) 
+            nearby = [n for n in nodes if math.hypot(n.x - new_x, n.y - new_y) < radius]            
             # Choose best parent
             min_cost = nearest.cost + math.hypot(new_x - nearest.x, new_y - nearest.y)
             best_parent = nearest
@@ -1174,6 +1210,7 @@ class AutonomousExplorer(Node):
             path.append((current.x, current.y))
             current = current.parent
         path.reverse()
+        path = self._smooth_path(path)  
 
         solve_ms = (time.monotonic() - _t_start) * 1000.0
         msg_f = Float32(); msg_f.data = float(solve_ms)
@@ -1182,6 +1219,30 @@ class AutonomousExplorer(Node):
         self.metrics_rrt_iters_pub.publish(msg_i)
         return path
     
+    def _smooth_path(self, path):
+        """
+        Greedy line-of-sight shortcutting.
+        Removes intermediate waypoints if the direct segment is collision-free.
+        """
+        if len(path) <= 2:
+            return path
+
+        smoothed = [path[0]]
+        i = 0
+
+        while i < len(path) - 1:
+            # Try to connect current point to as far ahead as possible
+            j = len(path) - 1
+            while j > i + 1:
+                if self.is_collision_free(path[i][0], path[i][1],
+                                        path[j][0], path[j][1]):
+                    break
+                j -= 1
+            smoothed.append(path[j])
+            i = j
+
+        return smoothed
+
     def sample_free(self):
         if self._free_cells_cache is None or len(self._free_cells_cache) == 0:
             return (self.current_x, self.current_y)
@@ -1225,7 +1286,54 @@ class AutonomousExplorer(Node):
                 return False
         
         return True
-    
+    def information_gain_cone(self,
+                                cx: int, cy: int,
+                                facing_angle: float,
+                                sensor_range_m: float,
+                                fov_rad: float = math.radians(80.0)) -> float:
+        """
+        Count unknown cells within a forward-facing cone.
+
+        cx, cy       : grid cell of the candidate frontier centroid
+        facing_angle : direction drone will face = atan2(frontier - current pos)
+        sensor_range_m: how far the camera sees (use ig_sensor_range param)
+        fov_rad      : horizontal FOV of your camera (OAK-D Pro W ~ 80 deg)
+        """
+        if self.map_data is None:
+            return 0.0
+
+        res     = self.map_info.resolution
+        H, W    = self.map_data.shape
+        r_cells = int(math.ceil(sensor_range_m / res))
+
+        row_lo = max(0, cy - r_cells)
+        row_hi = min(H, cy + r_cells + 1)
+        col_lo = max(0, cx - r_cells)
+        col_hi = min(W, cx + r_cells + 1)
+
+        patch = self.map_data[row_lo:row_hi, col_lo:col_hi]
+
+        rows = np.arange(row_lo, row_hi) - cy
+        cols = np.arange(col_lo, col_hi) - cx
+        dr, dc = np.meshgrid(rows, cols, indexing='ij')
+
+        # angle of each cell relative to the candidate viewpoint
+        cell_angles = np.arctan2(dr, dc)
+
+        # angular difference from facing direction, wrapped to [-pi, pi]
+        angle_diff = np.arctan2(
+            np.sin(cell_angles - facing_angle),
+            np.cos(cell_angles - facing_angle)
+        )
+
+        dist_cells = np.sqrt(dr ** 2 + dc ** 2)
+
+        mask = (
+            (patch == -1) &
+            (dist_cells <= r_cells) &
+            (np.abs(angle_diff) <= fov_rad / 2.0)
+        )
+        return float(np.sum(mask))
     # ==================== POTENTIAL FIELD LOCAL CONTROLLER ====================
     
     def potential_field_control(self):
@@ -1345,6 +1453,8 @@ class AutonomousExplorer(Node):
         gx_cell, gy_cell = self.world_to_grid(self.current_x, self.current_y)
 
         if gx_cell is not None and self.sdf_obs is not None:
+
+            _cbf_t0 = time.monotonic()
             cbf_result = self.cbf.filter(
                 u_des   = np.array([vx, vy]),
                 sdf_obs = self.sdf_obs,
@@ -1353,7 +1463,11 @@ class AutonomousExplorer(Node):
                 gy      = gy_cell,
                 res     = self.map_info.resolution,
             )
- 
+            _cbf_solve_us = (time.monotonic() - _cbf_t0) * 1e6
+
+            msg_f = Float32(); msg_f.data = float(_cbf_solve_us)
+            self.metrics_cbf_solve_time_pub.publish(msg_f)
+            
             vx = float(cbf_result.u_safe[0])
             vy = float(cbf_result.u_safe[1])
  
@@ -1414,8 +1528,10 @@ class AutonomousExplorer(Node):
         if self.check_if_stuck():
             self.get_logger().warn("Stuck , clearing waypoints to force replan")
             self.waypoints = []
+            self.goal_x = None
             self.publish_zero_velocity()
             return
+        
         
         self._publish_apf_markers()
 
@@ -1650,17 +1766,24 @@ class AutonomousExplorer(Node):
         msg = Twist()
         msg.linear.x = vx
         msg.linear.y = vy
+        msg.linear.z = 0.0 
         msg.angular.z = yaw_rate
         self.vel_pub.publish(msg)
     
     def publish_zero_velocity(self):
-        self.publish_velocity(0.0, 0.0)
+        self.publish_velocity(0.0, 0.0, 0.0)
     
     def _compute_tracking_error(self) -> float:
         """
         Perpendicular distance from current position to the
         nearest segment of the current RRT* waypoint path.
         """
+        if self._last_replan_time is None:
+            return 0.0
+        elapsed = (self.get_clock().now() - self._last_replan_time).nanoseconds / 1e9
+        if elapsed < 2.0:
+            return 0.0
+        
         if len(self.waypoints) < 2 or self.current_waypoint_idx >= len(self.waypoints):
             return 0.0
 
@@ -1962,8 +2085,9 @@ class AutonomousExplorer(Node):
             m.text = (
                 f"h1={cbf_result.h1:.2f}  phi1={cbf_result.phi1:.2f}m\n"
                 f"h2={h2_str}  phi2={phi2_str}m\n"
-                f"slack={cbf_result.slack:.3f}{flags}"
-            )
+                f"slack={cbf_result.slack:.3f} γ₂={self.cbf.gamma2:.3f}\n"
+                + (f"\n{flags.strip()}" if flags.strip() else "")  
+                )
             m.color = ColorRGBA(r=1.0, g=1.0, b=1.0, a=1.0)
             markers.markers.append(m)
 

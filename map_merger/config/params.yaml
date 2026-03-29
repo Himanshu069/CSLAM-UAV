@@ -1,0 +1,48 @@
+# config/params.yaml
+# ------------------
+# Default parameters for the map_merger_node.
+# All values can be overridden at launch time.
+#
+# HOW TO SET THE RELATIVE POSE
+# ─────────────────────────────
+# You need the 2-D pose of robot2's map origin expressed in robot1's map frame.
+# If you drove robot2 to a known location in robot1's map before starting SLAM:
+#
+#   map2_x   = X coordinate of robot2's starting position in robot1's map (metres)
+#   map2_y   = Y coordinate of robot2's starting position in robot1's map (metres)
+#   map2_yaw = heading difference between the two maps (radians, CCW positive)
+#
+# Example: robot2 started 5 m east and 2 m north of robot1, rotated 90° CCW:
+#   map2_x:   5.0
+#   map2_y:   2.0
+#   map2_yaw: 1.5708   # pi/2
+
+map_merger:
+  ros__parameters:
+
+    map1_topic:   /x500_drone_0/map
+    map2_topic:   /x500_drone_1/map
+    merged_topic: /merged_map
+
+    map1_frame:  x500_drone_0/map
+    map2_frame:  x500_drone_1/map
+    merged_frame: merged_map
+
+    map1_flip_x: false
+    map1_flip_y: false
+    map1_rot90:  0
+    map2_flip_x: false
+    map2_flip_y: false
+    map2_rot90:  0
+
+    map1_x:   0.0
+    map1_y:   0.0
+    map1_yaw: 0.0
+
+    map2_x:   0.0     
+    map2_y:   0.0     
+    map2_yaw: 0.0     
+
+    publish_rate: 1.0  
+    merge_mode:   max   
+    border_m:     0.5  

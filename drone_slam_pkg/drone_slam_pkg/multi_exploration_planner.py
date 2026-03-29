@@ -351,7 +351,7 @@ class AutonomousExplorer(Node):
             ("min_frontier_size", 1),        # Min cells in frontier cluster
             ("frontier_search_rate", 1.0),   # Hz
             ("exploration_complete_threshold", 0.95), # 95% map known
-            ("frontier_weight_approach", 2.0),  
+            ("frontier_weight_approach", 0.2),  
             ("map_frame", "map"),
             
             # --- RRT* PARAMETERS ---
@@ -375,21 +375,21 @@ class AutonomousExplorer(Node):
                     
             # --- EXPLORATION STRATEGY ---
             ("frontier_weight_size", 1.0),   # Prefer larger frontiers
-            ("frontier_weight_distance", 2.0), # Prefer closer frontiers
+            ("frontier_weight_distance", 0.2), # Prefer closer frontiers
 
             #-----COSTMAP/ DRONE SAFETY---------
             ("drone_radius", 0.25),
 
             #-------MULTI-DRONE AVOIDANCE------------
             ("other_drone_pose_topic", "/x500_drone_1/localization_pose"),
-            ("other_drone_safety_radius", 3),
+            ("other_drone_safety_radius", 0.75),
             ("k_rep_drone", 200.0),
             ("other_drone_init_x", 0.0),
             ("other_drone_init_y", 0.0),
             ("frontier_search_radii", [ 2.5, 5.0, 10.0, -1.0]),
             
-            ("partition_rotation_step", 15.0),
-            ("partition_max_rotation",  150.0),
+            # ("partition_rotation_step", 15.0),
+            # ("partition_max_rotation",  150.0),
 
             ("cbf_d_safe",            0.35),   # obstacle standoff (m)
             ("cbf_d_stop",            0.35),   # frontier standoff (m)
@@ -451,9 +451,7 @@ class AutonomousExplorer(Node):
         self.other_drone_init_x = self.get_parameter("other_drone_init_x").value
         self.other_drone_init_y = self.get_parameter("other_drone_init_y").value
 
-        self._partition_rotation_deg  = 0.0
-        self._partition_rotation_step = self.get_parameter("partition_rotation_step").value
-        self._partition_max_rotation  = self.get_parameter("partition_max_rotation").value
+
         
         raw_radii = self.get_parameter("frontier_search_radii").value
         self.frontier_search_radii = [float(r) for r in raw_radii]
@@ -610,11 +608,11 @@ class AutonomousExplorer(Node):
         self.get_logger().info("   Frontier Detection: ON")
         self.get_logger().info("   RRT* Planning: ON")
         self.get_logger().info("   Potential Field Control: ON")
-        self.get_logger().info(
-            f"   Map partitioning: ON  "
-            f"(step={self._partition_rotation_step:.0f}°, "
-            f"max={self._partition_max_rotation:.0f}°)"
-        )
+        # self.get_logger().info(
+        #     f"   Map partitioning: ON  "
+        #     f"(step={self._partition_rotation_step:.0f}°, "
+        #     f"max={self._partition_max_rotation:.0f}°)"
+        # )
         self.get_logger().info(f"   Drone radius (inflation): {self.drone_radius:.2f} m")
         self.get_logger().info(f"   Other drone pose topic:  {self.other_drone_pose_topic}")
         self.get_logger().info(f"   Drone repulsion gain:    {self.k_rep_drone}")
@@ -877,9 +875,6 @@ class AutonomousExplorer(Node):
             # Trigger immediate replan
             self.rrt_replan()
 
-            if self._partition_rotation_deg != 0.0:
-                self._partition_rotation_deg = 0.0
-                self.get_logger().info("Partition rotation reset to 0° (frontier found)")
     
     def find_frontiers(self, search_radius=None):
         """
@@ -949,7 +944,6 @@ class AutonomousExplorer(Node):
             self.get_logger().warn(
                 f"All {n_all} frontier(s) on other drone's side — rotating partition"
             )
-            self._rotate_partition()
             return []
         
         self.get_logger().info(
@@ -1051,14 +1045,8 @@ class AutonomousExplorer(Node):
         if dist < 1e-4:
             return None, None
 
-        nx0 = -dx / dist
-        ny0 = -dy / dist
-
-        theta = math.radians(self._partition_rotation_deg)
-        cos_t = math.cos(theta)
-        sin_t = math.sin(theta)
-        nx = cos_t * nx0 - sin_t * ny0
-        ny = sin_t * nx0 + cos_t * ny0
+        nx = -dx / dist
+        ny = -dy / dist
 
         return (mx, my), (nx, ny)
     
@@ -1071,18 +1059,6 @@ class AutonomousExplorer(Node):
         dot = (cx - mx) * nx + (cy - my) * ny
         return dot >= 0.0
     
-    def _rotate_partition(self):
-        self._partition_rotation_deg += self._partition_rotation_step
-
-        if self._partition_rotation_deg > self._partition_max_rotation:
-            self._partition_rotation_deg = 0.0
-            self.get_logger().info("Partition rotation reset to 0° (max rotation reached)")
-        else:
-            self.get_logger().info(
-                f"Partition rotated to {self._partition_rotation_deg:.0f}°  "
-                f"(step={self._partition_rotation_step:.0f}°, "
-                f"max={self._partition_max_rotation:.0f}°)"
-            )
 
     # ==================== RRT* GLOBAL PLANNER ====================
     
@@ -2109,11 +2085,7 @@ class AutonomousExplorer(Node):
         p1 = Point(); p1.x = mx - lx * half_len; p1.y = my - ly * half_len; p1.z = 0.5
         p2 = Point(); p2.x = mx + lx * half_len; p2.y = my + ly * half_len; p2.z = 0.5
         m.points = [p1, p2]
-        if self._partition_rotation_deg < 1e-3:
-            m.color = ColorRGBA(r=0.0, g=1.0, b=0.2, a=0.8)
-        else:
-            t = min(self._partition_rotation_deg / self._partition_max_rotation, 1.0)
-            m.color = ColorRGBA(r=t, g=1.0 - t * 0.5, b=0.0, a=0.8)
+        m.color = ColorRGBA(r=0.0, g=1.0, b=0.2, a=0.8)
         markers.markers.append(m)
 
         # Arrow pointing toward this drone's side
@@ -2143,7 +2115,7 @@ class AutonomousExplorer(Node):
         m3.action = Marker.ADD
         m3.pose.position.x = mx; m3.pose.position.y = my; m3.pose.position.z = 1.0
         m3.scale.z = 0.20
-        m3.text = f"partition\nrot={self._partition_rotation_deg:.0f}°"
+        m3.text = "partition"
         m3.color = ColorRGBA(r=1.0, g=1.0, b=1.0, a=1.0)
         markers.markers.append(m3)
 

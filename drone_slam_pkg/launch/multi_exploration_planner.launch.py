@@ -21,9 +21,9 @@ def generate_launch_description():
                 {
                     "drone_radius": 0.26,
                     "other_drone_pose_topic": '/x500_drone_1/localization_pose',
-                    "other_drone_safety_radius": 3,
-                    "other_drone_init_x": 2.0 ,
-                    "other_drone_init_y": 0.0,
+                    "other_drone_safety_radius": 0.75,
+                    "other_drone_init_x": 0.0 ,
+                    "other_drone_init_y": -1.9,
                     'map_frame': '/x500_drone_0/map'
                 }
             ],
@@ -61,9 +61,9 @@ def generate_launch_description():
                 {
                     "drone_radius": 0.26,
                     "other_drone_pose_topic": '/x500_drone_0/localization_pose',
-                    "other_drone_safety_radius": 3,
-                    "other_drone_init_x": -2.0 ,
-                    "other_drone_init_y": 0.0,
+                    "other_drone_safety_radius": 0.75,
+                    "other_drone_init_x": 0.0 ,
+                    "other_drone_init_y": 1.9,
                     'map_frame': '/x500_drone_1/map'
                 }
             ],
