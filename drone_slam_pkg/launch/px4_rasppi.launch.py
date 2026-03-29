@@ -35,7 +35,7 @@ def generate_launch_description():
             'Vis/InlierDistance': '0.1',        
             'wait_for_transform': 2.0,
             'Optimizer/GravitySigma': '0',
-            'wait_imu_to_init': True,
+            'wait_imu_to_init': False,
             # 'Vis/FeatureType': '10',
             'Kp/DetectorStrategy': '10',
 
@@ -49,8 +49,8 @@ def generate_launch_description():
             'NormalsSegmentation': 'true',
             'Grid/MaxGroundHeight': '0.5', 
             'Grid/MaxObstacleHeight': '1.10',
-            'Grid/NoiseFilteringRadius': '0.5',
-            'Grid/NoiseFilteringMinNeighbors': '4',
+            'Grid/NoiseFilteringRadius': '0.15',
+            'Grid/NoiseFilteringMinNeighbors': '7',
             
             'database_path': f'~/.ros/{db_name}.db'
         }

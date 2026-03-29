@@ -149,10 +149,10 @@ def generate_launch_description():
                 arguments=['0', '0', '0', '0', '0', '0', 'x500_drone_1/base_link', 'x500_drone_1/imu_sensor']),
         
         Node(package='tf2_ros', executable='static_transform_publisher',
-                arguments=['0.12', '0.03', '0.242', '0', '0', '0', 'x500_drone_1/base_link', 'x500_drone_1/camera_link']),
+                arguments=['0.12', '0.03', '0.242', '-1.5708', '0', '-1.5708', 'x500_drone_1/base_link', 'x500_drone_1/camera_link']),
 
         Node(package='tf2_ros', executable='static_transform_publisher',
-                arguments=['0', '0', '0', '-1.5708', '0', '-1.5708', 'x500_drone_1/camera_link', 'camera_rgb_camera_optical_frame']),
+                arguments=['0', '0', '0', '0', '0', '0', 'x500_drone_1/camera_link', 'camera_rgb_camera_optical_frame']),
 
         Node(
             package='px4_ros_bridge',
@@ -167,7 +167,8 @@ def generate_launch_description():
                 {'accel_noise': 0.3500},  #EKF2_ACC_NOISE
             ],
             remappings=[
-                ('/fmu/out/vehicle_attitude','px4_1/fmu/out/vehicle_attitude'),
+                ('/fmu/out/vehicle_attitude','/px4_1/fmu/out/vehicle_attitude'),
+                ('fmu/out/sensor_combined','/px4_1/fmu/out/sensor_combined'),
                 ]
         ),
 
@@ -244,10 +245,10 @@ def generate_launch_description():
                     output="screen",
                     parameters=[{
                         "use_sim_time": False,
-                        "approx_sync": False,
+                        "approx_sync": True,
                         #"approx_sync_max_interval": 0.04,
-                        "queue_size": 200,
-                        "sync_queue_size": 100,
+                        "queue_size": 50,
+                        "sync_queue_size": 50,
                     }],
                     remappings=[
                         ("rgb/image", "/x500_drone_1/rgb/image"),
