@@ -153,17 +153,20 @@ def generate_launch_description():
        #         arguments=['0', '0', '0', '-1.5708', '0', '-1.5708', 'x500_drone_0/camera_link', 'camera_rgb_camera_optical_frame']),
 
         Node(
-            package='px4_ros_bridge',
-            executable='px4_imu_bridge',
+            package='px4_ros_com',             
+            executable='imu_bridge',           
             name='px4_imu_bridge',
             output='screen',
             parameters=[
                 {'use_sim_time': False},
                 {'vehicle_ns': 'x500_drone_0'},
-                {'gyro_noise': 0.0150},   #EKF2_GYR_NOISE
-                {'accel_noise': 0.3500},  #EKF2_ACC_NOISE
-
+                {'gyro_noise': 0.0150},        # EKF2_GYR_NOISE
+                {'accel_noise': 0.500},        # EKF2_ACC_NOISE
             ],
+            remappings=[
+                ('/fmu/out/vehicle_attitude', '/fmu/out/vehicle_attitude'),
+                ('/fmu/out/sensor_combined', '/fmu/out/sensor_combined'),
+            ]
         ),
 
         #Drone 0
