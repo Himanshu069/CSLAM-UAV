@@ -135,7 +135,7 @@ def generate_launch_description():
             package='image_proc',
             executable='rectify_node',
             name='rectify_color_image',
-            prefix='taskset -c 0',
+            prefix='taskset -c 2',
             output='screen',
             parameters=[{'use_sim_time': False}],
             remappings=[
@@ -161,6 +161,7 @@ def generate_launch_description():
             package='px4_ros_com',             
             executable='imu_bridge',           
             name='px4_imu_bridge',
+            prefix='taskset -c 2',
             output='screen',
             parameters=[
                 {'use_sim_time': False},
@@ -181,6 +182,7 @@ def generate_launch_description():
                     package='imu_filter_madgwick',
                     executable='imu_filter_madgwick_node',
                     name='imul_filter_1',
+                    prefix='taskset -c 2',
                     output='screen',
                     parameters=[{
                         'use_mag': False,
@@ -196,6 +198,7 @@ def generate_launch_description():
                 Node(
                     package='rtabmap_util',
                     executable='imu_to_tf',
+                    prefix='taskset -c 2',
                     name='imu_to_tf_1',
                     output='screen',
                     parameters=[{
@@ -242,7 +245,7 @@ def generate_launch_description():
                     package="rtabmap_sync",
                     executable="rgbd_sync",
                     name="rgbd_sync_x500_drone_1",
-                    prefix='taskset -c 1',
+                    prefix='taskset -c 2',
                     namespace="x500_drone_1",
                     output="screen",
                     parameters=[{
@@ -262,7 +265,7 @@ def generate_launch_description():
                     package="rtabmap_odom",
                     executable="rgbd_odometry",
                     name="rgbd_odometry_1",
-                    prefix="taskset -c 0,1",
+                    prefix="taskset -c 0",
                     namespace="x500_drone_1",
                     output="screen",
                     parameters=[get_vslam_params("x500_drone_1", "rtabmap_drone_1"),
@@ -282,7 +285,7 @@ def generate_launch_description():
                     package='px4_ros_com',
                     executable='ros_odometry_to_vehicle_odometry',
                     name='ros_odometry_to_vehicle_odometry_0',
-                    prefix='taskset -c 0',
+                    prefix='taskset -c 2',
                     parameters=[
                         {"odom_topic": "/x500_drone_1/odom"},
                         {"vehicle_odometry_topic": "/px4_1/fmu/in/vehicle_visual_odometry"},
@@ -314,7 +317,7 @@ def generate_launch_description():
                     package="rtabmap_slam",
                     executable="rtabmap",
                     name="rtabmap_1",
-                    prefix="taskset -c 2",
+                    prefix="taskset -c 1",
                     namespace="x500_drone_1",
                     output="screen",
                     parameters=[get_vslam_params("x500_drone_1", "rtabmap_drone_1"),
