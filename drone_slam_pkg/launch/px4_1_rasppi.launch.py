@@ -28,32 +28,33 @@ def generate_launch_description():
             'subscribe_odom': True,
             'subscribe_imu': True,
             'approx_sync': True,
-            'queue_size': 20,
-            'sync_queue_size': 10,
+            'approx_sync_max_interval': 0.02,
+            'queue_size': 50,
+            'sync_queue_size': 50,
 
             'Odom/ResetCountdown': '1',     
-            'Vis/MinInliers': '2',
+            'Vis/MinInliers': '6',
             'Vis/InlierDistance': '0.1',        
             'wait_for_transform': 2.0,
-            'Optimizer/GravitySigma': '0',
+            'Optimizer/GravitySigma': '0.3',
             'wait_imu_to_init': False,
             'publish_tf': True,
             # 'Vis/FeatureType': '10',
             'Kp/DetectorStrategy': '10',
 
-            'Vis/MaxFeatures': '300',
+            'Vis/MaxFeatures': '200',
+            'Kp/MaxFeatures': '200',
             'Odom/Strategy': '1',
-            
+            'Vis/CorType': '1',
             'RGBD/AngularUpdate': '0.01',
             'RGBD/LinearUpdate': '0.01',
             
-            
             'Grid/RayTracing' : 'true',
-            'NormalsSegmentation': 'true',
+            'NormalsSegmentation': 'false',
             'Grid/MaxGroundHeight': '1.15', 
             'Grid/MaxObstacleHeight': '1.75',
             'Grid/NoiseFilteringRadius': '0.15',
-            'Grid/NoiseFilteringMinNeighbors': '5',
+            'Grid/NoiseFilteringMinNeighbors': '7',
             
             'database_path': f'~/.ros/{db_name}.db'
         }
@@ -134,6 +135,7 @@ def generate_launch_description():
             package='image_proc',
             executable='rectify_node',
             name='rectify_color_image',
+            prefix='taskset -c 0',
             output='screen',
             parameters=[{'use_sim_time': False}],
             remappings=[
@@ -154,27 +156,26 @@ def generate_launch_description():
         Node(package='tf2_ros', executable='static_transform_publisher',
                 arguments=['0', '0', '0', '0', '0', '0', 'x500_drone_1/camera_link', 'camera_rgb_camera_optical_frame']),
 
+
         Node(
-            package='px4_ros_bridge',
-            executable='px4_imu_bridge',
+            package='px4_ros_com',             
+            executable='imu_bridge',           
             name='px4_imu_bridge',
             output='screen',
             parameters=[
                 {'use_sim_time': False},
                 {'vehicle_ns': 'x500_drone_1'},
-                {'px4_ns': '/px4_1'},
-                {'gyro_noise': 0.0150},   #EKF2_GYR_NOISE
-                {'accel_noise': 0.3500},  #EKF2_ACC_NOISE
+                {'gyro_noise': 0.0150},        # EKF2_GYR_NOISE
+                {'accel_noise': 0.500},        # EKF2_ACC_NOISE
             ],
             remappings=[
-                ('/fmu/out/vehicle_attitude','/px4_1/fmu/out/vehicle_attitude'),
-                ('fmu/out/sensor_combined','/px4_1/fmu/out/sensor_combined'),
-                ]
+                ('/fmu/out/vehicle_attitude', '/px4_1/fmu/out/vehicle_attitude'),
+                ('/fmu/out/sensor_combined', '/px4_1/fmu/out/sensor_combined'),
+            ]
         ),
-
         #Drone 0
         TimerAction(
-                period=10.0,
+                period=5.0,
            actions=[
                 Node(
                     package='imu_filter_madgwick',
@@ -211,7 +212,7 @@ def generate_launch_description():
         ),
         
         TimerAction(
-            period= 20.0,
+                period= 10.0,
             actions=[
                # Node(
                #     package='topic_tools',
@@ -241,12 +242,13 @@ def generate_launch_description():
                     package="rtabmap_sync",
                     executable="rgbd_sync",
                     name="rgbd_sync_x500_drone_1",
+                    prefix='taskset -c 1',
                     namespace="x500_drone_1",
                     output="screen",
                     parameters=[{
                         "use_sim_time": False,
                         "approx_sync": True,
-                        #"approx_sync_max_interval": 0.04,
+                        "approx_sync_max_interval": 0.05,
                         "queue_size": 50,
                         "sync_queue_size": 50,
                     }],
@@ -260,9 +262,16 @@ def generate_launch_description():
                     package="rtabmap_odom",
                     executable="rgbd_odometry",
                     name="rgbd_odometry_1",
+                    prefix="taskset -c 0,1",
                     namespace="x500_drone_1",
                     output="screen",
-                    parameters=[get_vslam_params("x500_drone_1", "rtabmap_drone_1")],
+                    parameters=[get_vslam_params("x500_drone_1", "rtabmap_drone_1"),
+                                {
+                                    'RGBD/CreateOccupancyGrid': 'false',
+                                    'Rtabmap/DetectionRate': '0',
+                                    'Mem/STMSize': '5',
+                                }
+                            ],
                     remappings=[
                         ("imu", "/x500_drone_1/imu/data"),
                         ("map", "/x500_drone_1/map"),
@@ -270,19 +279,19 @@ def generate_launch_description():
                     ],
                 ),
                 Node(
-                    package="rtabmap_slam",
-                    executable="rtabmap",
-                    name="rtabmap_1",
-                    namespace="x500_drone_1",
-                    output="screen",
-                    parameters=[get_vslam_params("x500_drone_1", "rtabmap_drone_1")],
-                    remappings=[
-                        ("imu", "/x500_drone_1/imu/data"),
-                        ("odom", "/x500_drone_1/odom"),
-                        ("map", "/x500_drone_1/map"),
+                    package='px4_ros_com',
+                    executable='ros_odometry_to_vehicle_odometry',
+                    name='ros_odometry_to_vehicle_odometry_0',
+                    prefix='taskset -c 0',
+                    parameters=[
+                        {"odom_topic": "/x500_drone_1/odom"},
+                        {"vehicle_odometry_topic": "/px4_1/fmu/in/vehicle_visual_odometry"},
+                        {"map_frame_id": "x500_drone_1/odom"},
+                        {"repeat_odom": False}
                     ],
-                    arguments=["-d"], 
+                    output='screen'
                 ),
+
         # Node(
         #     package="rtabmap_viz",
         #     executable="rtabmap_viz",
@@ -296,46 +305,33 @@ def generate_launch_description():
         #         ("map", "/x500_drone_0/map"),
         #     ],
         # ),
-                Node(
-                    package='rtabmap_util', executable='point_cloud_xyz', output='screen',
-                    name='pointcloud_xyz_1',
-                    namespace= 'x500_drone_1',
-                    parameters=[{
-                        'voxel_size': 0.1,
-                        'use_sim_time': False,
-                        'approx_sync': True,
-                                 }],
-                    remappings=[('depth/image', '/x500_drone_1/depth/image'),
-                        ('depth/camera_info', '/x500_drone_1/rgb/camera_info'),
-                        ('cloud', '/x500_drone_1/camera/cloud')]
-                 ),
-            ]
+        ]
         ),
-
         TimerAction(
-            period= 30.0,
+            period= 20.0,
             actions=[
                 Node(
-                    package='rtabmap_costmap_plugins',
-                    executable='voxel_marker',
-                    output='screen',
-                    name='voxel_marker_1',
-                    namespace="/x500_drone_1",
-                    parameters=[{'use_sim_time': False}]
+                    package="rtabmap_slam",
+                    executable="rtabmap",
+                    name="rtabmap_1",
+                    prefix="taskset -c 2",
+                    namespace="x500_drone_1",
+                    output="screen",
+                    parameters=[get_vslam_params("x500_drone_1", "rtabmap_drone_1"),
+                                {
+                                    'RGBD/CreateOccupancyGrid': 'true',
+                                    'Rtabmap/DetectionRate': '1',
+                                    'Mem/STMSize': '10',
+                                }
+                                ],
+                    remappings=[
+                        ("imu", "/x500_drone_1/imu/data"),
+                        ("odom", "/x500_drone_1/odom"),
+                        ("map", "/x500_drone_1/map"),
+                    ],
+                    arguments=["-d"],
                 ),
 
-                Node(
-                    package='px4_ros_com',         
-                    executable='ros_odometry_to_vehicle_odometry',  
-                    name='ros_odometry_to_vehicle_odometry_0',
-                    parameters=[
-                        {"odom_topic": "/x500_drone_1/odom"},
-                        {"vehicle_odometry_topic": "px4_1/fmu/in/vehicle_visual_odometry"},
-                        {"map_frame_id": "x500_drone_1/map"},   
-                        {"repeat_odom": False}      
-                    ],
-                    output='screen'
-                ),
             ]
         ),
     ])

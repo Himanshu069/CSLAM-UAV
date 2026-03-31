@@ -18,7 +18,3 @@
 [submodule "ROS2_PX4_Offboard_Example"]
 	path = ROS2_PX4_Offboard_Example
 	url = https://github.com/joshibasu62/ROS2_PX4_Offboard_Example.git
-[submodule "PX4_ROS_BRIDGE"]
-	path = PX4_ROS_BRIDGE
-	url = https://github.com/Himanshu069/PX4_ROS_BRIDGE.git
-	branch = rasppi
