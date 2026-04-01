@@ -8,12 +8,7 @@ import os
 import yaml
 
 def generate_launch_description():
-    #px4_dir = os.path.join(os.getenv("HOME"), "PX4-Autopilot")
-    #yaml_file = os.path.expanduser('~/oakdprow.yaml')
-    #with open(yaml_file,'r') as f:
-    #    params = yaml.safe_load(f)
-   # oak_name = "oak"
-   # depthai_prefix = get_package_share_directory("depthai_ros_driver")
+
     def get_vslam_params(drone_ns, db_name):
         return {
            'use_sim_time': False,
@@ -63,74 +58,7 @@ def generate_launch_description():
     
     
     return LaunchDescription([
-       # ExecuteProcess(
-       #     cmd=["micro-xrce-dds-agent", "udp4", "-p", "8888"],
-       #     output="screen",
-       # ),
 
-        #IncludeLaunchDescription(
-        #    PythonLaunchDescriptionSource([
-        #        os.path.join(get_package_share_directory('realsense2_camera'), 'launch', 'rs_launch.py')
-        #   ]),
-        #    launch_arguments={
-        #        'align_depth.enable': 'true',       
-        #        'pointcloud.enable': 'false',       
-        #        'depth_module.profile': '640x480x15', 
-        #        'rgb_camera.profile': '640x480x15'
-        #    }.items()
-       # ),
-       # Node(
-       #     package='topic_tools',
-       #     executable='relay',
-       #     name='relay_camera_info',
-       #     arguments=[
-       #         '/camera/camera/aligned_depth_to_color/camera_info',
-       #         '/x500_drone_0/rgb/camera_info'
-       #  ],
-       # output='screen'
-       # ),
-       # Node(
-       #     package='topic_tools',
-       #     executable='relay',
-       #     name='relay_depth_image',
-       #     arguments=[
-       #         '/camera/camera/aligned_depth_to_color/image_raw',
-       #         '/x500_drone_0/depth/image'
-       # ],
-       # output='screen'
-       # ),
-       # Node(
-       #     package='topic_tools',
-       #     executable='relay',
-       #     name='relay_rgb_image',
-       #     arguments=[
-       #         '/camera/camera/color/image_raw',
-       #         '/x500_drone_0/rgb/image'
-       # ],
-       # output='screen'
-       #),
-
-       # Node(
-       #     package='depthai_ros_driver',
-       #     executable='camera_node',
-       #     name='oak',
-       #     output='screen',
-       #     parameters=[params],
-       #     remappings=[
-       #         ('/camera/rgb/camera_info', '/x500_drone_0/rgb/camera_info'),
-       #         ('/camera/rgb/image_raw','/x500_drone_0/rgb/image'),
-       #         ('/camera/stereo/image_raw','/x500_drone_0/depth/image'),
-       #     ]
-       # ),
-       # IncludeLaunchDescription(
-       #     PythonLaunchDescriptionSource(
-       #         os.path.join(depthai_prefix, "launch", "camera.launch.py")
-       #     ),
-       #     launch_arguments={
-       #         "name": oak_name,
-       #         "params_file": os.path.expanduser("~/oak_run.yaml"),
-       #     }.items(),
-       # ),
         Node(
             package='image_proc',
             executable='rectify_node',
@@ -146,7 +74,6 @@ def generate_launch_description():
         ),
           
 
-     #Drone 0
         Node(package='tf2_ros', executable='static_transform_publisher',
                 arguments=['0', '0', '0', '0', '0', '0', 'x500_drone_1/base_link', 'x500_drone_1/imu_sensor']),
         
@@ -217,30 +144,7 @@ def generate_launch_description():
         TimerAction(
                 period= 10.0,
             actions=[
-               # Node(
-               #     package='topic_tools',
-               #     executable='relay',
-               #     name='relay_rgb_image',
-               #     arguments=[f'/{oak_name}/rgb/image_raw',
-               #                 '/x500_drone_0/rgb/image'],
-               #     output='screen'
-               # ),
-               # Node(
-               #     package='topic_tools',
-               #     executable='relay',
-               #     name='relay_camera_info',
-               #     arguments=[f'/{oak_name}/rgb/camera_info',
-               #                 '/x500_drone_0/rgb/camera_info'],
-               #     output='screen'
-               # ),
-               # Node(
-               #     package='topic_tools',
-               #     executable='relay',
-               #     name='relay_depth_image',
-               #     arguments=[f'/{oak_name}/stereo/image_raw',
-               #                 '/x500_drone_0/depth/image'],
-               #     output='screen'
-               # ),
+
                 Node(
                     package="rtabmap_sync",
                     executable="rgbd_sync",
@@ -295,19 +199,7 @@ def generate_launch_description():
                     output='screen'
                 ),
 
-        # Node(
-        #     package="rtabmap_viz",
-        #     executable="rtabmap_viz",
-        #     name="rtabmap_viz_0",
-        #     namespace="x500_drone_0",
-        #     output="screen",
-        #     parameters=[get_vslam_params("x500_drone_0", "rtabmap_drone_0")],
-        #     remappings=[
-        #         ("imu", "/x500_drone_0/imu/data"),
-        #         ("odom", "/x500_drone_0/odom"),
-        #         ("map", "/x500_drone_0/map"),
-        #     ],
-        # ),
+ 
         ]
         ),
         TimerAction(

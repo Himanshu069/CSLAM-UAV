@@ -8,12 +8,6 @@ import os
 import yaml
 
 def generate_launch_description():
-    #px4_dir = os.path.join(os.getenv("HOME"), "PX4-Autopilot")
-    #yaml_file = os.path.expanduser('~/oak_run.yaml')
-    #with open(yaml_file,'r') as f:
-    #    params = yaml.safe_load(f)
-   # oak_name = "oak"
-   # depthai_prefix = get_package_share_directory("depthai_ros_driver")
     def get_vslam_params(drone_ns, db_name):
         return {
            'use_sim_time': False,
@@ -64,23 +58,24 @@ def generate_launch_description():
        #     output="screen",
        # ),
 
-        IncludeLaunchDescription(
-            PythonLaunchDescriptionSource([
-                os.path.join(get_package_share_directory('realsense2_camera'), 'launch', 'rs_launch.py')
-           ]),
-            launch_arguments={
-                'align_depth.enable': 'true',
-                'enable_sync': 'true',
-                'pointcloud.enable': 'false',       
-                'depth_module.depth_profile': '424x240x15', 
-                'rgb_camera.color_profile': '424x240x15',
-            }.items()
+        ExecuteProcess(
+            cmd=[
+                'taskset', '-c', '3',
+                'ros2', 'launch', 'realsense2_camera', 'rs_launch.py',
+                'align_depth.enable:=true',
+                'enable_sync:=true',
+                'pointcloud.enable:=false',
+                'depth_module.depth_profile:=424x240x15',
+                'rgb_camera.color_profile:=424x240x15',
+            ],
+        output='screen'
         ),
+
         Node(
             package='topic_tools',
             executable='relay',
             name='relay_camera_info',
-            prefix='taskset -c 2',
+            prefix=['taskset', '-c', '2'],
             arguments=[
                 '/camera/camera/color/camera_info',
                 '/x500_drone_0/rgb/camera_info'
@@ -91,7 +86,7 @@ def generate_launch_description():
             package='topic_tools',
             executable='relay',
             name='relay_depth_image',
-            prefix='taskset -c 2',
+            prefix=['taskset', '-c', '2'],
             arguments=[
                 '/camera/camera/aligned_depth_to_color/image_raw',
                 '/x500_drone_0/depth/image'
@@ -102,7 +97,7 @@ def generate_launch_description():
             package='topic_tools',
             executable='relay',
             name='relay_rgb_image',
-            prefix='taskset -c 2',
+            prefix=['taskset', '-c', '2'],
             arguments=[
                 '/camera/camera/color/image_raw',
                 '/x500_drone_0/rgb/image'
@@ -125,7 +120,7 @@ def generate_launch_description():
             package='px4_ros_com',             
             executable='imu_bridge',           
             name='px4_imu_bridge',
-            prefix='taskset -c 2',
+            prefix=['taskset', '-c', '2'],
             output='screen',
             parameters=[
                 {'use_sim_time': False},
@@ -147,7 +142,7 @@ def generate_launch_description():
                     package='imu_filter_madgwick',
                     executable='imu_filter_madgwick_node',
                     name='imul_filter_0',
-                    prefix='taskset -c 2',
+                    prefix=['taskset', '-c', '2'],
                     output='screen',
                     parameters=[{
                         'use_mag': False,
@@ -164,7 +159,7 @@ def generate_launch_description():
                     package='rtabmap_util',
                     executable='imu_to_tf',
                     name='imu_to_tf_0',
-                    prefix='taskset -c 2',
+                    prefix=['taskset', '-c', '2'],
                     output='screen',
                     parameters=[{
                         'use_sim_time': False,
@@ -185,7 +180,7 @@ def generate_launch_description():
                     package="rtabmap_sync",
                     executable="rgbd_sync",
                     name="rgbd_sync_x500_drone_0",
-                    prefix='taskset -c 2',
+                    prefix=['taskset', '-c', '0'],
                     namespace="x500_drone_0",
                     output="screen",
                     parameters=[{
@@ -204,7 +199,7 @@ def generate_launch_description():
                     package="rtabmap_odom",
                     executable="rgbd_odometry",
                     name="rgbd_odometry_0",
-                    prefix='taskset -c 0',
+                    prefix=['taskset', '-c', '0'],
                     namespace="x500_drone_0",
                     output="screen",
                     parameters=[get_vslam_params("x500_drone_0", "rtabmap_drone_0")],
@@ -218,7 +213,7 @@ def generate_launch_description():
                     package='px4_ros_com',
                     executable='ros_odometry_to_vehicle_odometry',
                     name='ros_odometry_to_vehicle_odometry_0',
-                    prefix='taskset -c 2',
+                    prefix=['taskset', '-c', '2'],
                     parameters=[
                         {"odom_topic": "/x500_drone_0/odom"},
                         {"vehicle_odometry_topic": "/fmu/in/vehicle_visual_odometry"},
@@ -238,7 +233,7 @@ def generate_launch_description():
                     package="rtabmap_slam",
                     executable="rtabmap",
                     name="rtabmap_0",
-                    prefix='taskset -c 1',
+                    prefix=['taskset', '-c', '2'],
                     namespace="x500_drone_0",
                     output="screen",
                     parameters=[get_vslam_params("x500_drone_0", "rtabmap_drone_0")],
