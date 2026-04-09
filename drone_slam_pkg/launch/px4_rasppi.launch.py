@@ -28,8 +28,10 @@ def generate_launch_description():
             'subscribe_odom': True,
             'subscribe_imu': True,
             'approx_sync': True,
-            'queue_size': 20,
-            'sync_queue_size': 10,
+            'queue_size': 50,
+            'sync_queue_size': 50,
+            'tf_buffer_size': 30.0,
+            'transform_tolerance': 0.2,
 
             'Vis/MinInliers': '15',
             'Vis/InlierDistance': '0.1',        
@@ -125,7 +127,7 @@ def generate_launch_description():
             package='px4_ros_com',             
             executable='imu_bridge',           
             name='px4_imu_bridge',
-            prefix='taskset -c 2',
+            prefix='taskset -c 3',
             output='screen',
             parameters=[
                 {'use_sim_time': False},
@@ -147,7 +149,7 @@ def generate_launch_description():
                     package='imu_filter_madgwick',
                     executable='imu_filter_madgwick_node',
                     name='imul_filter_0',
-                    prefix='taskset -c 2',
+                    prefix='taskset -c 3',
                     output='screen',
                     parameters=[{
                         'use_mag': False,
@@ -164,7 +166,7 @@ def generate_launch_description():
                     package='rtabmap_util',
                     executable='imu_to_tf',
                     name='imu_to_tf_0',
-                    prefix='taskset -c 2',
+                    prefix='taskset -c 3',
                     output='screen',
                     parameters=[{
                         'use_sim_time': False,
@@ -190,7 +192,7 @@ def generate_launch_description():
                     output="screen",
                     parameters=[{
                         "use_sim_time": False,
-                        "approx_sync": False,
+                        "approx_sync": True,
                         "queue_size": 20,
                         "sync_queue_size": 10,
                     }],
