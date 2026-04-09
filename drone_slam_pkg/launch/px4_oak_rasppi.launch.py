@@ -67,38 +67,38 @@ def generate_launch_description():
             output='screen',
             parameters=[{'use_sim_time': False}],
             remappings=[
-                ('image',       '/x500_drone_1/rgb/image_raw'),
-                ('camera_info', '/x500_drone_1/rgb/camera_info'),
-                ('image_rect',  '/x500_drone_1/rgb/image') 
+                ('image',       '/x500_drone_0/rgb/image_raw'),
+                ('camera_info', '/x500_drone_0/rgb/camera_info'),
+                ('image_rect',  '/x500_drone_0/rgb/image') 
             ],
         ),
           
 
         Node(package='tf2_ros', executable='static_transform_publisher',
-                arguments=['0', '0', '0', '0', '0', '0', 'x500_drone_1/base_link', 'x500_drone_1/imu_sensor']),
+                arguments=['0', '0', '0', '0', '0', '0', 'x500_drone_0/base_link', 'x500_drone_0/imu_sensor']),
         
         Node(package='tf2_ros', executable='static_transform_publisher',
-                arguments=['0.12', '0.03', '0.242', '-1.5708', '0', '-1.5708', 'x500_drone_1/base_link', 'x500_drone_1/camera_link']),
+                arguments=['0.12', '0.03', '0.242', '-1.5708', '0', '-1.5708', 'x500_drone_0/base_link', 'x500_drone_0/camera_link']),
 
         Node(package='tf2_ros', executable='static_transform_publisher',
-                arguments=['0', '0', '0', '0', '0', '0', 'x500_drone_1/camera_link', 'camera_rgb_camera_optical_frame']),
+                arguments=['0', '0', '0', '0', '0', '0', 'x500_drone_0/camera_link', 'camera_rgb_camera_optical_frame']),
 
 
         Node(
             package='px4_ros_com',             
             executable='imu_bridge',           
-            name='px4_imu_bridge_1',
+            name='px4_imu_bridge_0',
             prefix='taskset -c 2',
             output='screen',
             parameters=[
                 {'use_sim_time': False},
-                {'vehicle_ns': 'x500_drone_1'},
+                {'vehicle_ns': 'x500_drone_0'},
                 {'gyro_noise': 0.0150},        # EKF2_GYR_NOISE
                 {'accel_noise': 0.500},        # EKF2_ACC_NOISE
             ],
             remappings=[
-                ('/fmu/out/vehicle_attitude', '/px4_1/fmu/out/vehicle_attitude'),
-                ('/fmu/out/sensor_combined', '/px4_1/fmu/out/sensor_combined'),
+                ('/fmu/out/vehicle_attitude', '/fmu/out/vehicle_attitude'),
+                ('/fmu/out/sensor_combined', '/fmu/out/sensor_combined'),
             ]
         ),
         #Drone 0
@@ -108,7 +108,7 @@ def generate_launch_description():
                 Node(
                     package='imu_filter_madgwick',
                     executable='imu_filter_madgwick_node',
-                    name='imul_filter_1',
+                    name='imul_filter_0',
                     prefix='taskset -c 2',
                     output='screen',
                     parameters=[{
@@ -118,24 +118,24 @@ def generate_launch_description():
                         'use_sim_time': False,
                     }],
                     remappings=[
-                        ('imu/data_raw', '/x500_drone_1/imu/data_raw'),
-                        ('imu/data',     '/x500_drone_1/imu/data'),
+                        ('imu/data_raw', '/x500_drone_0/imu/data_raw'),
+                        ('imu/data',     '/x500_drone_0/imu/data'),
                     ]
                 ),
                 Node(
                     package='rtabmap_util',
                     executable='imu_to_tf',
                     prefix='taskset -c 2',
-                    name='imu_to_tf_1',
+                    name='imu_to_tf_0',
                     output='screen',
                     parameters=[{
                         'use_sim_time': False,
-                        'fixed_frame_id': 'x500_drone_1/base_link_stabilized',
-                        'base_frame_id': 'x500_drone_1/base_link',
+                        'fixed_frame_id': 'x500_drone_0/base_link_stabilized',
+                        'base_frame_id': 'x500_drone_0/base_link',
                         'wait_for_transform': 1.0,
                     }],
                     remappings=[
-                        ('imu/data', '/x500_drone_1/imu/data'),
+                        ('imu/data', '/x500_drone_0/imu/data'),
                     ]
                 ),
             ]
@@ -148,9 +148,9 @@ def generate_launch_description():
                 Node(
                     package="rtabmap_sync",
                     executable="rgbd_sync",
-                    name="rgbd_sync_x500_drone_1",
+                    name="rgbd_sync_x500_drone_0",
                     prefix='taskset -c 2',
-                    namespace="x500_drone_1",
+                    namespace="x500_drone_0",
                     output="screen",
                     parameters=[{
                         "use_sim_time": False,
@@ -160,19 +160,19 @@ def generate_launch_description():
                         "sync_queue_size": 50,
                     }],
                     remappings=[
-                        ("rgb/image", "/x500_drone_1/rgb/image"),
-                        ("rgb/camera_info", "/x500_drone_1/rgb/camera_info"),
-                        ("depth/image", "/x500_drone_1/depth/image"),
+                        ("rgb/image", "/x500_drone_0/rgb/image"),
+                        ("rgb/camera_info", "/x500_drone_0/rgb/camera_info"),
+                        ("depth/image", "/x500_drone_0/depth/image"),
                     ],
                 ),
                 Node(
                     package="rtabmap_odom",
                     executable="rgbd_odometry",
-                    name="rgbd_odometry_1",
+                    name="rgbd_odometry_0",
                     prefix="taskset -c 0",
-                    namespace="x500_drone_1",
+                    namespace="x500_drone_0",
                     output="screen",
-                    parameters=[get_vslam_params("x500_drone_1", "rtabmap_drone_1"),
+                    parameters=[get_vslam_params("x500_drone_0", "rtabmap_drone_0"),
                                 {
                                     'RGBD/CreateOccupancyGrid': 'false',
                                     'Rtabmap/DetectionRate': '0',
@@ -180,20 +180,20 @@ def generate_launch_description():
                                 }
                             ],
                     remappings=[
-                        ("imu", "/x500_drone_1/imu/data"),
-                        ("map", "/x500_drone_1/map"),
-                        ("odom", "/x500_drone_1/odom"),  
+                        ("imu", "/x500_drone_0/imu/data"),
+                        ("map", "/x500_drone_0/map"),
+                        ("odom", "/x500_drone_0/odom"),  
                     ],
                 ),
                 Node(
                     package='px4_ros_com',
                     executable='ros_odometry_to_vehicle_odometry',
-                    name='ros_odometry_to_vehicle_odometry_1',
+                    name='ros_odometry_to_vehicle_odometry_0',
                     prefix='taskset -c 2',
                     parameters=[
-                        {"odom_topic": "/x500_drone_1/odom"},
-                        {"vehicle_odometry_topic": "/px4_1/fmu/in/vehicle_visual_odometry"},
-                        {"map_frame_id": "x500_drone_1/odom"},
+                        {"odom_topic": "/x500_drone_0/odom"},
+                        {"vehicle_odometry_topic": "/fmu/in/vehicle_visual_odometry"},
+                        {"map_frame_id": "x500_drone_0/odom"},
                         {"repeat_odom": False}
                     ],
                     output='screen'
@@ -208,11 +208,11 @@ def generate_launch_description():
                 Node(
                     package="rtabmap_slam",
                     executable="rtabmap",
-                    name="rtabmap_1",
+                    name="rtabmap_0",
                     prefix="taskset -c 1",
-                    namespace="x500_drone_1",
+                    namespace="x500_drone_0",
                     output="screen",
-                    parameters=[get_vslam_params("x500_drone_1", "rtabmap_drone_1"),
+                    parameters=[get_vslam_params("x500_drone_0", "rtabmap_drone_0"),
                                 {
                                     'RGBD/CreateOccupancyGrid': 'true',
                                     'Rtabmap/DetectionRate': '1',
@@ -220,9 +220,9 @@ def generate_launch_description():
                                 }
                                 ],
                     remappings=[
-                        ("imu", "/x500_drone_1/imu/data"),
-                        ("odom", "/x500_drone_1/odom"),
-                        ("map", "/x500_drone_1/map"),
+                        ("imu", "/x500_drone_0/imu/data"),
+                        ("odom", "/x500_drone_0/odom"),
+                        ("map", "/x500_drone_0/map"),
                     ],
                     arguments=["-d"],
                 ),

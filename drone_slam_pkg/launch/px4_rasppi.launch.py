@@ -126,7 +126,7 @@ def generate_launch_description():
         Node(
             package='px4_ros_com',             
             executable='imu_bridge',           
-            name='px4_imu_bridge',
+            name='px4_imu_bridge_0',
             prefix='taskset -c 3',
             output='screen',
             parameters=[
