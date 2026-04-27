@@ -29,12 +29,13 @@ setup(
                         'odom_drone_tf = drone_slam_pkg.odom_drone_tf:main',
                         'offboard_control = drone_slam_pkg.offboard_control:main',
                         'exploration_planner = drone_slam_pkg.exploration_planner:main',
-                        'offboard_radius = drone_slam_pkg.offboard_radius:main',
+                        'baseline_exploration_planner = drone_slam_pkg.baseline_exploration_planner:main',
                         'control = drone_slam_pkg.control:main',
                         'control1 = drone_slam_pkg.control1:main',
                         'velocity_control = drone_slam_pkg.velocity_control:main',
                         'velocity_control1 = drone_slam_pkg.velocity_control1:main',
-                        'logger_exploration_planner = drone_slam_pkg.logger_exploration_planner:main'
+                        'logger_exploration_planner = drone_slam_pkg.logger_exploration_planner:main',
+                        'multi_exploration_planner = drone_slam_pkg.exploration_planner:main',
 
             ],
         },

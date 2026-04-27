@@ -57,9 +57,13 @@ class ExplorationLogger(Node):
                                         "apf_force_ratio","tracking_error_m"])
         self._open_csv("cbf",          ["t", "h1", "h2", "phi1_m", "phi2_m",
                                         "slack", "cbf1_active", "cbf2_active",
-                                        "speed_clipped", "soft_delta", "gamma2"])
+                                        "speed_clipped", "soft_delta"])
         self._open_csv("events",      ["t", "event_type"])
         self._open_csv("apf_internal",["t", "local_min_count"])
+        
+        self._open_csv("multi_drone",  ["t", "other_drone_dist_m",
+                                        "repulsion_mag", "repulsion_active",
+                                        "in_safety_radius"])
 
         self._start_time         = self.get_clock().now()
 
@@ -99,21 +103,15 @@ class ExplorationLogger(Node):
         self._last_speed_clipped = False
         self._last_soft_delta    = 0.0
         self._cbf_infeasible_count = 0
-
-        self._last_gamma2        = 0.0
-        self._gamma2_samples     = []
-        
-        self._cbf_solve_us_samples = []
-        self._last_cbf_solve_us = 0.0
-
+ 
         # CBF summary samples
         self._cbf_h1_samples     = []
         self._cbf_h2_samples     = []
         self._cbf_slack_samples  = []
         self._cbf_phi1_samples   = []
         self._cbf_phi2_samples   = []
-        self._cbf1_active_count  = 0   
-        self._cbf2_active_count  = 0   
+        self._cbf1_active_count  = 0   # ticks where c1 fired
+        self._cbf2_active_count  = 0   # ticks where c2 fired
         self._cbf_speed_clip_count = 0
         self._cbf_total_ticks    = 0  
 
@@ -121,6 +119,15 @@ class ExplorationLogger(Node):
         self._stuck_count        = 0
         self._escape_count       = 0
         self._replan_count       = 0
+
+        # multi-drone
+        self._last_drone_dist      = float('inf')
+        self._last_drone_rep_mag   = 0.0
+        self._last_drone_active    = False
+        self._last_drone_in_radius = False
+        self._drone_dist_samples   = []   # for summary stats
+        self._drone_in_radius_ticks = 0   # ticks where drones were close
+        self._drone_total_ticks     = 0
 
         self._actual_trajectory = []
         self._rrt_paths = []
@@ -139,7 +146,7 @@ class ExplorationLogger(Node):
         )
         qos_reliable = QoSProfile(
             reliability=ReliabilityPolicy.RELIABLE,
-            durability=DurabilityPolicy.VOLATILE,
+            durability=DurabilityPolicy.TRANSIENT_LOCAL,
             history=HistoryPolicy.KEEP_LAST,
             depth=1,
         )
@@ -203,11 +210,7 @@ class ExplorationLogger(Node):
                                   self._cb_cbf_delta,          qos)
         self.create_subscription(Bool,    topic("metrics/cbf_speed_clipped"),
                                   self._cb_cbf_speed_clipped,  qos)
-        self.create_subscription(Float32, topic("metrics/cbf_solve_time_us"),
-                         self._cb_cbf_solve_time, qos)
-        self.create_subscription(Float32, topic("metrics/cbf_gamma2_adaptive"),
-                          self._cb_cbf_gamma2, qos)
-        
+
         # Events
         self.create_subscription(Bool,    topic("metrics/stuck_event"),
                                  self._cb_stuck,          qos)
@@ -216,6 +219,16 @@ class ExplorationLogger(Node):
         self.create_subscription(Bool,    topic("metrics/rrt_replan_triggered"),
                                  self._cb_replan,         qos)
 
+        # Multi-drone avoidance
+        self.create_subscription(Float32, topic("metrics/other_drone_distance_m"),
+                                 self._cb_drone_dist,        qos)
+        self.create_subscription(Float32, topic("metrics/other_drone_repulsion_mag"),
+                                 self._cb_drone_rep_mag,     qos)
+        self.create_subscription(Bool,    topic("metrics/other_drone_repulsion_active"),
+                                 self._cb_drone_rep_active,  qos)
+        self.create_subscription(Bool,    topic("metrics/other_drone_in_safety_radius"),
+                                 self._cb_drone_in_radius,   qos)
+        
         # APF internal
         self.create_subscription(Int32,   topic("metrics/local_min_count"),
                                  self._cb_local_min,      qos)
@@ -228,12 +241,13 @@ class ExplorationLogger(Node):
         # periodic flush timer — write buffered rows every 5 s
         self._row_buffer = {k: [] for k in
                             ["coverage", "path", "planning",
-                             "safety", "cbf","events", "apf_internal"]}
+                             "safety", "cbf","events", "apf_internal",  "multi_drone"]}
         
         self.create_timer(1.0,  self._write_coverage_row)
         self.create_timer(0.1,  self._write_safety_row)
         self.create_timer(0.1,  self._write_cbf_row) 
         self.create_timer(1.0, self._flush_buffers)
+        self.create_timer(0.5,  self._write_multi_drone_row)
 
         self.get_logger().info("Exploration Logger ONLINE")
         self.get_logger().info(f"  Namespace : '{self.ns}' (empty = single drone)")
@@ -290,10 +304,36 @@ class ExplorationLogger(Node):
     def _cb_efficiency(self, msg: Float32):
         self._last_efficiency = msg.data
 
-    def _cb_cbf_gamma2(self, msg: Float32):
-        self._last_gamma2 = msg.data
-        self._gamma2_samples.append(msg.data)
+    def _cb_drone_dist(self, msg: Float32):
+        self._last_drone_dist = msg.data
+        self._drone_dist_samples.append(msg.data)
     
+    def _cb_drone_rep_mag(self, msg: Float32):
+        self._last_drone_rep_mag = msg.data
+    
+    def _cb_drone_rep_active(self, msg: Bool):
+        self._last_drone_active = msg.data
+        if msg.data:
+            self._buf("events", {"t": round(self._t(), 3),
+                                  "event_type": "drone_repulsion_active"})
+    
+    def _cb_drone_in_radius(self, msg: Bool):
+        self._last_drone_in_radius = msg.data
+        self._drone_total_ticks += 1
+        if msg.data:
+            self._drone_in_radius_ticks += 1
+    
+    def _write_multi_drone_row(self):
+        self._buf("multi_drone", {
+            "t":                 round(self._t(), 3),
+            "other_drone_dist_m": round(self._last_drone_dist, 4)
+                                   if self._last_drone_dist != float('inf') else "",
+            "repulsion_mag":     round(self._last_drone_rep_mag, 4),
+            "repulsion_active":  int(self._last_drone_active),
+            "in_safety_radius":  int(self._last_drone_in_radius),
+        })
+
+
     def _write_coverage_row(self):
         t = self._t()
         self._coverage_samples.append((t, self._last_coverage_pct))
@@ -317,9 +357,6 @@ class ExplorationLogger(Node):
     def _cb_avg_speed(self, msg: Float32):
         self._last_avg_speed = msg.data
 
-    def _cb_cbf_solve_time(self, msg: Float32):
-        self._last_cbf_solve_us = msg.data
-        self._cbf_solve_us_samples.append(msg.data)
 
 
     def _cb_rrt_time(self, msg: Float32):
@@ -407,7 +444,6 @@ class ExplorationLogger(Node):
         self._last_cbf2_active = msg.data
         if msg.data:
             self._cbf2_active_count += 1
-        self._cbf_total_ticks += 1
  
     def _cb_cbf_infeasible(self, msg: Int32):
         # Only log an event when the count increments
@@ -443,8 +479,8 @@ class ExplorationLogger(Node):
             "cbf2_active":  int(self._last_cbf2_active),
             "speed_clipped":int(self._last_speed_clipped),
             "soft_delta":   round(self._last_soft_delta, 6),
-            "gamma2":       round(self._last_gamma2, 4),   
         })
+ 
 
     def _cb_stuck(self, msg: Bool):
         if msg.data:
@@ -572,14 +608,17 @@ class ExplorationLogger(Node):
             "avg_cbf_slack":               safe_avg(self._cbf_slack_samples),
             "max_cbf_slack":               round(max(self._cbf_slack_samples), 5)
                                            if self._cbf_slack_samples else None,
-            "avg_cbf_solve_us": safe_avg(self._cbf_solve_us_samples),
-            "max_cbf_solve_us": round(max(self._cbf_solve_us_samples), 2) 
-                    if self._cbf_solve_us_samples else None,
 
-            "avg_gamma2":   safe_avg(self._gamma2_samples),
-            "min_gamma2":   safe_min(self._gamma2_samples),
-            "max_gamma2":   round(max(self._gamma2_samples), 4) if self._gamma2_samples else None,
- 
+            # ── multi-drone ──
+            "drone_min_separation_m":   round(min(self._drone_dist_samples), 4)
+                                        if self._drone_dist_samples else None,
+            "drone_avg_separation_m":   safe_avg(self._drone_dist_samples),
+            "drone_in_radius_ticks":    self._drone_in_radius_ticks,
+            "drone_total_ticks":        self._drone_total_ticks,
+            "drone_proximity_rate":     round(
+                self._drone_in_radius_ticks / max(self._drone_total_ticks, 1), 4
+            ) if self._drone_total_ticks else None,
+                
             # ── events ──
             "total_stuck_events":       self._stuck_count,
             "total_escape_events":      self._escape_count,
@@ -604,14 +643,20 @@ class ExplorationLogger(Node):
         self.get_logger().info(f"  CBF intervention   : {cbf_intervention_rate}")
         self.get_logger().info(f"  CBF infeasible     : {self._cbf_infeasible_count}")
         self.get_logger().info(f"  CBF speed clips    : {self._cbf_speed_clip_count}")
+
+        min_sep = round(min(self._drone_dist_samples), 3) \
+                  if self._drone_dist_samples else "N/A"
+        avg_sep = safe_avg(self._drone_dist_samples) or "N/A"
+        prox_pct = round(
+            100.0 * self._drone_in_radius_ticks / max(self._drone_total_ticks, 1), 1
+        ) if self._drone_total_ticks else "N/A"
+        self.get_logger().info(f"  Drone min sep    : {min_sep} m")
+        self.get_logger().info(f"  Drone avg sep    : {avg_sep} m")
+        self.get_logger().info(f"  In safety radius : {prox_pct} % of ticks")
         h1_min = safe_min(self._cbf_h1_samples)
         self.get_logger().info(f"  min h1 (obstacle)  : {h1_min}")
         h2_min = safe_min(self._cbf_h2_samples)
         self.get_logger().info(f"  min h2 (frontier)  : {h2_min}")
-        g2_avg = safe_avg(self._gamma2_samples)
-        self.get_logger().info(f"  γ₂ adaptive avg/min/max: "
-            f"{g2_avg} / {safe_min(self._gamma2_samples)} / "
-            f"{round(max(self._gamma2_samples), 4) if self._gamma2_samples else 'N/A'}")
         track_str = f"{avg_tracking} m (max: {max_tracking} m)" if avg_tracking else "N/A"
         self.get_logger().info(f"  Tracking error   : {track_str}")
         self.get_logger().info(f"  Summary written  : {path}")

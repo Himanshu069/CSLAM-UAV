@@ -28,7 +28,7 @@ def generate_launch_description():
             'Odom/ResetCountdown': '1',     
             'Vis/MinInliers': '15',         
             'Odom/Strategy': '0',           
-            'wait_for_transform': 0.5,
+            'wait_for_transform': 1.0,
             'Imu/FilteringStrategy': '1',    
             'Imu/FilteringMedianSize': '5',
             'Optimizer/GravitySigma': '0.1',
@@ -36,7 +36,10 @@ def generate_launch_description():
             'publish_tf': True,
             # 'Vis/FeatureType': '10',
             # 'Kp/DetectorStrategy': '10',
-
+            'Odom/GuessMotion': 'true',       # use last known motion when odom is stale
+            'RGBD/LinearUpdate': '0.01',      # only update map if moved 1cm (reduces stale-frame processing)
+            'RGBD/AngularUpdate': '0.01',
+            
             'Grid/RayTracing' : 'true',
             'Grid/MinGroundHeight': '-0.1',
             'Grid/MapFrameProjection': 'true',
@@ -83,7 +86,7 @@ def generate_launch_description():
         #                 "cd " + px4_dir +
         #                 " && mkdir -p build/px4_sitl_default/instance_1 "
         #                 "&& PX4_SYS_AUTOSTART=4001 "
-        #                 'PX4_GZ_MODEL_POSE="0,-0.8,0" '
+        #                 'PX4_GZ_MODEL_POSE="2,0,0" '
         #                 'PX4_GZ_MODEL_ORIENTATION="0,0,0.0" '
         #                 "PX4_SIM_MODEL=gz_x500_depth "
         #                 "./build/px4_sitl_default/bin/px4 $PWD/build/px4_sitl_default/etc -s etc/init.d-posix/rcS -i 1 -w $PWD/build/px4_sitl_default/instance_1; exec bash"
@@ -96,7 +99,29 @@ def generate_launch_description():
         TimerAction(
             period=20.0,
             actions=[
-
+                # Node(
+                #     package="ros_gz_bridge",
+                #     executable="parameter_bridge",
+                #     name="gz_bridge_imu_2drones",
+                #     output="screen",
+                #     parameters=[{
+                #         "use_sim_time": True,
+                #         "subscription_heartbeat_period": 10,   # More frequent heartbeat
+                #         "subscriber_queue_depth": 200,          # Large queue for high-rate IMU
+                #         "publisher_queue_depth": 200,
+                #     }],
+                #     arguments=[
+                #         # Drone 0 IMU
+                #         "/world/default/model/x500_depth_0/link/base_link/sensor/imu_sensor/imu@sensor_msgs/msg/Imu[gz.msgs.IMU",
+                #         # "/world/default/model/x500_depth_1/link/base_link/sensor/imu_sensor/imu@sensor_msgs/msg/Imu[gz.msgs.IMU",
+                #     ],
+                #     remappings=[
+                #         # Drone 0
+                #         ("/world/default/model/x500_depth_0/link/base_link/sensor/imu_sensor/imu", "/x500_drone_0/imu/data_raw"),
+                #         # Drone 1
+                #         # ("/world/default/model/x500_depth_1/link/base_link/sensor/imu_sensor/imu", "/x500_drone_1/imu/data_raw"),
+                #     ],
+                # ),
 
                 Node(
                     package="ros_gz_bridge",
@@ -106,6 +131,8 @@ def generate_launch_description():
                     parameters=[{
                             "use_sim_time": True,
                             "subscription_heartbeat_period": 100,
+                            "subscriber_queue_depth": 50,  
+                            "publisher_queue_depth": 50, 
                                  }],
                     arguments=[
                         "/clock@rosgraph_msgs/msg/Clock[gz.msgs.Clock",
@@ -117,10 +144,10 @@ def generate_launch_description():
                         "/world/default/model/x500_depth_0/link/base_link/sensor/imu_sensor/imu@sensor_msgs/msg/Imu[gz.msgs.IMU",
 
                         # Drone 1
-                        "/world/default/model/x500_depth_1/link/camera_link/sensor/IMX214/image@sensor_msgs/msg/Image[gz.msgs.Image",
-                        "/world/default/model/x500_depth_1/link/camera_link/sensor/IMX214/camera_info@sensor_msgs/msg/CameraInfo[gz.msgs.CameraInfo",
-                        "/world/default/model/x500_depth_1/link/camera_link/sensor/StereoOV7251/depth_image@sensor_msgs/msg/Image[gz.msgs.Image",
-                        "/world/default/model/x500_depth_1/link/base_link/sensor/imu_sensor/imu@sensor_msgs/msg/Imu[gz.msgs.IMU",
+                        # "/world/default/model/x500_depth_1/link/camera_link/sensor/IMX214/image@sensor_msgs/msg/Image[gz.msgs.Image",
+                        # "/world/default/model/x500_depth_1/link/camera_link/sensor/IMX214/camera_info@sensor_msgs/msg/CameraInfo[gz.msgs.CameraInfo",
+                        # "/world/default/model/x500_depth_1/link/camera_link/sensor/StereoOV7251/depth_image@sensor_msgs/msg/Image[gz.msgs.Image",
+                        # "/world/default/model/x500_depth_1/link/base_link/sensor/imu_sensor/imu@sensor_msgs/msg/Imu[gz.msgs.IMU",
                     ],
                     remappings=[
                         # Drone 0
@@ -130,10 +157,10 @@ def generate_launch_description():
                         ("/world/default/model/x500_depth_0/link/base_link/sensor/imu_sensor/imu", "/x500_drone_0/imu/data_raw"),
 
                         # Drone 1
-                        ("/world/default/model/x500_depth_1/link/camera_link/sensor/IMX214/image", "/x500_drone_1/rgb/image"),
-                        ("/world/default/model/x500_depth_1/link/camera_link/sensor/IMX214/camera_info", "/x500_drone_1/rgb/camera_info"),
-                        ("/world/default/model/x500_depth_1/link/camera_link/sensor/StereoOV7251/depth_image", "/x500_drone_1/depth/image"),
-                        ("/world/default/model/x500_depth_1/link/base_link/sensor/imu_sensor/imu", "/x500_drone_1/imu/data_raw"),
+                        # ("/world/default/model/x500_depth_1/link/camera_link/sensor/IMX214/image", "/x500_drone_1/rgb/image"),
+                        # ("/world/default/model/x500_depth_1/link/camera_link/sensor/IMX214/camera_info", "/x500_drone_1/rgb/camera_info"),
+                        # ("/world/default/model/x500_depth_1/link/camera_link/sensor/StereoOV7251/depth_image", "/x500_drone_1/depth/image"),
+                        # ("/world/default/model/x500_depth_1/link/base_link/sensor/imu_sensor/imu", "/x500_drone_1/imu/data_raw"),
                     ],
                 ),
 
@@ -152,16 +179,16 @@ def generate_launch_description():
 
                 
                 # Drone 1
-                Node(package='tf2_ros', executable='static_transform_publisher',
-                     arguments=['0', '0', '0', '0', '0', '0', 'x500_drone_1/base_link', 'x500_depth_1/base_link/imu_sensor']),
+                # Node(package='tf2_ros', executable='static_transform_publisher',
+                #      arguments=['0', '0', '0', '0', '0', '0', 'x500_drone_1/base_link', 'x500_depth_1/base_link/imu_sensor']),
                 
-                Node(package='tf2_ros', executable='static_transform_publisher',
-                     arguments=['0.12', '0.03', '0.242', '-1.570796327', '0', '-1.570796327', 'x500_drone_1/base_link', 'x500_drone_1/camera_link']),
+                # Node(package='tf2_ros', executable='static_transform_publisher',
+                #      arguments=['0.12', '0.03', '0.242', '-1.570796327', '0', '-1.570796327', 'x500_drone_1/base_link', 'x500_drone_1/camera_link']),
                 
-                Node(package='tf2_ros', executable='static_transform_publisher',
-                     arguments=['0.0123', '-0.03', '0.01878', '0', '0', '0', 'x500_drone_1/camera_link', 'x500_depth_1/camera_link/IMX214']),
-                Node(package='tf2_ros', executable='static_transform_publisher',
-                     arguments=['0.01233', '-0.03', '0.01878', '0', '0', '0', 'x500_drone_1/camera_link', 'x500_drone_1/camera_link/StereoOV7251']),
+                # Node(package='tf2_ros', executable='static_transform_publisher',
+                #      arguments=['0.0123', '-0.03', '0.01878', '0', '0', '0', 'x500_drone_1/camera_link', 'x500_depth_1/camera_link/IMX214']),
+                # Node(package='tf2_ros', executable='static_transform_publisher',
+                #      arguments=['0.01233', '-0.03', '0.01878', '0', '0', '0', 'x500_drone_1/camera_link', 'x500_drone_1/camera_link/StereoOV7251']),
 
                 #Drone 0
                 Node(
@@ -204,7 +231,7 @@ def generate_launch_description():
                     output="screen",
                     parameters=[{
                         "use_sim_time": True,
-                        "approx_sync": False,
+                        "approx_sync": True,
                         "approx_sync_max_interval": 0.04,
                         "queue_size": 200,
                         "sync_queue_size": 100,
@@ -287,29 +314,6 @@ def generate_launch_description():
                     output='screen'
                 ),
 
-                # Node(
-                #     package='rtabmap_costmap_plugins', executable='voxel_marker', output='screen',
-                #     namespace="x500_drone_0",
-                #     parameters=[{'use_sim_time': True}],
-                #     remappings=[
-                #         ("voxel_grid","/x500_drone_0/voxel_grid"),
-                #         ("visualization_marker","/x500_drone_0/visualization_marker"),
-                #     ]    
-                #     ),
-                # Node(
-                #     package='drone_slam_pkg',
-                #     executable='offboard_control',
-                #     name='drone_0_control',
-                #     namespace='x500_drone_0',
-                #     output='screen',
-                #     prefix='xterm -hold -e',
-                #     parameters =[
-                #         {"use_sim_time": True}
-                #     ],
-                #     remappings=[
-                #         ("/cmd_vel","/x500_drone_0/cmd_vel"), 
-                #     ]
-                # ),
                 #Drone 1
                 # Node(
                 #     package='imu_filter_madgwick',
@@ -434,17 +438,7 @@ def generate_launch_description():
                 #     ],
                 #     output='screen'
                 # ),
-                # Node(
-                #     package='drone_slam_pkg',
-                #     executable='exploration_planner',
-                #     name='exploration_planner_1',
-                #     output='screen',
-                #     remappings = [
-                #         ("map","/x500_drone_1/map"),
-                #         ("fmu/out/vehicle_local_position","px4_1/fmu/out/vehicle_local_position"),
-                #     ]
 
-                # ),
             ],
         ),
     ])

@@ -56,7 +56,7 @@ def build_sdf_obstacle(map_data: np.ndarray, resolution: float) -> np.ndarray:
       phi = 0  on obstacle surface
     Satisfies Eikonal ||grad phi|| = 1 a.e. (Rademacher's theorem).
     """
-    obstacle_mask = (map_data >= 65)
+    obstacle_mask = (map_data >= 50)
     d_out = ndimage.distance_transform_edt(~obstacle_mask) * resolution
     d_in  = ndimage.distance_transform_edt( obstacle_mask) * resolution
     return np.where(obstacle_mask, -d_in, d_out)
@@ -241,6 +241,7 @@ class TanhDualCBF:
                  g2^T u >= b2 - delta,  delta >= 0
  
         Solved by bisection on delta in [0, delta_max].
+        Provides ISSf bound (Romdlony & Jayawardhana 2016):
             h_i(t) >= h_i(0)*exp(-gamma_i*t)
                      - integral_0^t exp(-gamma_i*(t-s)) * delta*(s) ds
  
@@ -350,12 +351,12 @@ class AutonomousExplorer(Node):
             ("min_frontier_size", 1),        # Min cells in frontier cluster
             ("frontier_search_rate", 1.0),   # Hz
             ("exploration_complete_threshold", 0.95), # 95% map known
-            ("frontier_weight_approach", 0.2),  
+            ("frontier_weight_approach", 2.0),  
             ("map_frame", "map"),
             
             # --- RRT* PARAMETERS ---
             ("rrt_max_iter", 3000),
-            ("rrt_step_size", 0.5),
+            ("rrt_step_size", 1.0),
             ("rrt_goal_sample_rate", 0.15),
             ("rrt_search_radius", 3.0),
             ("rrt_replan_rate", 0.5),        # Hz
@@ -366,16 +367,15 @@ class AutonomousExplorer(Node):
             ("k_rep", 0.5),
             ("influence_radius", 0.75),
             ("pf_update_rate", 10.0),        # Hz
-            ("max_speed", 0.1),
+            ("max_speed", 0.2),
             ("waypoint_threshold", 0.3),
 
-            ("stuck_time_threshold", 2.0),   # seconds - time to detect astuck
+            ("stuck_time_threshold", 3.0),   # seconds - time to detect astuck
             ("stuck_distance_threshold", 0.05),  # meters - min movement expected
                     
             # --- EXPLORATION STRATEGY ---
             ("frontier_weight_size", 1.0),   # Prefer larger frontiers
-            ("frontier_weight_distance", 0.2), # Prefer closer frontiers
-            ("ig_sensor_range", 3.0),   #
+            ("frontier_weight_distance", 2.0), # Prefer closer frontiers
 
             #-----COSTMAP/ DRONE SAFETY---------
             ("drone_radius", 0.25),
@@ -386,12 +386,15 @@ class AutonomousExplorer(Node):
             ("k_rep_drone", 200.0),
             ("other_drone_init_x", 0.0),
             ("other_drone_init_y", 0.0),
-            ("frontier_search_radii", [ 5.0, 10.0, -1.0]),
+            ("frontier_search_radii", [ 2.5, 5.0, 10.0, -1.0]),
+            
+            ("partition_rotation_step", 15.0),
+            ("partition_max_rotation",  150.0),
 
             ("cbf_d_safe",            0.35),   # obstacle standoff (m)
             ("cbf_d_stop",            0.35),   # frontier standoff (m)
             ("cbf_a1",                2.0),    # tanh sharpness — obstacle
-            ("cbf_a2",                2.0),    # tanh sharpness — frontier
+            ("cbf_a2",                1.5),    # tanh sharpness — frontier
             ("cbf_gamma1",            1.5),    # CBF gain — obstacle
             ("cbf_gamma2",            1.0),    # CBF gain — frontier
             ("cbf_min_cluster_cells", 25),     # min unknown cluster size
@@ -399,7 +402,7 @@ class AutonomousExplorer(Node):
         
         self.map_frame = self.get_parameter("map_frame").value
         #Altitude
-        self.takeoff_altitude = 0.8  # meters
+        self.takeoff_altitude = 1.3  # meters
         self.altitude_ready = False
         self.current_z = 0.0
         # Frontier params
@@ -448,6 +451,10 @@ class AutonomousExplorer(Node):
         self.other_drone_init_x = self.get_parameter("other_drone_init_x").value
         self.other_drone_init_y = self.get_parameter("other_drone_init_y").value
 
+        self._partition_rotation_deg  = 0.0
+        self._partition_rotation_step = self.get_parameter("partition_rotation_step").value
+        self._partition_max_rotation  = self.get_parameter("partition_max_rotation").value
+        
         raw_radii = self.get_parameter("frontier_search_radii").value
         self.frontier_search_radii = [float(r) for r in raw_radii]
         
@@ -460,14 +467,6 @@ class AutonomousExplorer(Node):
             gamma2            = self.get_parameter("cbf_gamma2").value,
             v_max             = self.max_speed,
             min_cluster_cells = self.get_parameter("cbf_min_cluster_cells").value,
-        )
-        self._gamma2_max = self.get_parameter("cbf_gamma2").value
-        self._gamma2_min = 0.20
-        self._adaptive_gamma2_value = self.get_parameter("cbf_gamma2").value  # fallback
-        self.metrics_cbf_gamma2_pub = self.create_publisher(
-            Float32, "metrics/cbf_gamma2_adaptive", 10)
-        self.get_logger().info(
-            f"   Adaptive γ₂ range: [{self._gamma2_min:.2f}, {self._gamma2_max:.2f}]"
         )
         self._cbf_infeasible_count = 0
          
@@ -516,8 +515,6 @@ class AutonomousExplorer(Node):
         self._last_coverage_time = self.get_clock().now()
         self._running_min_clearance = float('inf')
 
-        self.ig_sensor_range = self.get_parameter("ig_sensor_range").value
-
         qos_map = QoSProfile(
             reliability=ReliabilityPolicy.RELIABLE,
             durability=DurabilityPolicy.VOLATILE,
@@ -554,6 +551,8 @@ class AutonomousExplorer(Node):
         self.apf_path_pub = self.create_publisher(Path, "apf_path", qos_path)
         self.waypoints_pub = self.create_publisher(PoseArray, "rrt_waypoints", qos_path)
         self.apf_markers_pub = self.create_publisher(MarkerArray, "apf_forces", 10)
+        self.partition_viz_pub = self.create_publisher(MarkerArray, "partition_viz", 10)
+
 
         #DATA logging
         # Coverage
@@ -594,7 +593,12 @@ class AutonomousExplorer(Node):
         self.metrics_cbf_infeasible_pub = self.create_publisher(Int32,   "metrics/cbf_infeasible_count", 10)
         self.metrics_cbf_delta_pub      = self.create_publisher(Float32, "metrics/cbf_soft_delta",       10)
         self.metrics_cbf_speed_clip_pub = self.create_publisher(Bool,    "metrics/cbf_speed_clipped",    10)
-        self.metrics_cbf_solve_time_pub = self.create_publisher(Float32, "metrics/cbf_solve_time_us", 10)
+        
+        self.metrics_drone_dist_pub       = self.create_publisher(Float32, "metrics/other_drone_distance_m",    10)
+        self.metrics_drone_rep_pub        = self.create_publisher(Float32, "metrics/other_drone_repulsion_mag", 10)
+        self.metrics_drone_active_pub     = self.create_publisher(Bool,    "metrics/other_drone_repulsion_active", 10)
+        self.metrics_drone_in_radius_pub  = self.create_publisher(Bool,    "metrics/other_drone_in_safety_radius", 10)
+        
         self.cbf_viz_pub = self.create_publisher(MarkerArray, "cbf_viz", 10)
         
         self.frontier_timer = self.create_timer(1.0 / self.frontier_rate, self.frontier_search_loop)
@@ -606,6 +610,11 @@ class AutonomousExplorer(Node):
         self.get_logger().info("   Frontier Detection: ON")
         self.get_logger().info("   RRT* Planning: ON")
         self.get_logger().info("   Potential Field Control: ON")
+        self.get_logger().info(
+            f"   Map partitioning: ON  "
+            f"(step={self._partition_rotation_step:.0f}°, "
+            f"max={self._partition_max_rotation:.0f}°)"
+        )
         self.get_logger().info(f"   Drone radius (inflation): {self.drone_radius:.2f} m")
         self.get_logger().info(f"   Other drone pose topic:  {self.other_drone_pose_topic}")
         self.get_logger().info(f"   Drone repulsion gain:    {self.k_rep_drone}")
@@ -619,20 +628,20 @@ class AutonomousExplorer(Node):
         self.current_y = msg.x
         self.current_z = msg.z
         
-       # if not self.altitude_ready:
-       #     self.get_logger().info(
-       #         "Waiting for takeoff... current altitude: %.2f m" % -self.current_z,
-       #         throttle_duration_sec=2.0
-       #     )
-       #     if (-self.current_z) >= self.takeoff_altitude *0.85:
-        self.altitude_ready = True
-       #         self.last_position = (self.current_x, self.current_y)  
-       #         self._exploration_start_time = self.get_clock().now() 
-       #         self.get_logger().info(
-       #             f"Takeoff altitude reached: {(-self.current_z):.2f} m"
-       #     )
-       #     else:
-       #         return  
+        if not self.altitude_ready:
+            self.get_logger().info(
+                "Waiting for takeoff... current altitude: %.2f m" % -self.current_z,
+                throttle_duration_sec=2.0
+            )
+            if (-self.current_z) >= self.takeoff_altitude *0.95:
+                self.altitude_ready = True
+                self.last_position = (self.current_x, self.current_y)  
+                self._exploration_start_time = self.get_clock().now() 
+                self.get_logger().info(
+                    f"Takeoff altitude reached: {(-self.current_z):.2f} m"
+            )
+            else:
+                return  
             
         dx = self.current_x - self.last_position[0]
         dy = self.current_y - self.last_position[1]
@@ -680,45 +689,7 @@ class AutonomousExplorer(Node):
         # EDT returns distance in *cells*; multiply by resolution for metres
         dist_cells = ndimage.distance_transform_edt(~obstacle_mask)
         self.distance_field = dist_cells * self.map_info.resolution  
-    def _update_adaptive_gamma2(self):
-        """
-        Recompute γ₂ from current map uncertainty density.
-        Called inside map_cb after sdf_unk is rebuilt.
 
-        ρ(x) = |unknown cells in sensor disc| / |disc area in cells|
-        γ₂   = γ_min + (γ_max − γ_min) · (1 − ρ)
-
-        High ρ (lots of unknown nearby) → γ_min  (relax, let drone approach)
-        Low  ρ (mostly mapped nearby)   → γ_max  (tighten, no value in pushing)
-        """
-        if not self.altitude_ready:          # ← add this guard
-            return
-        gamma_min = self._gamma2_min
-        gamma_max = self._gamma2_max  # declared max
-
-        gx, gy = self.world_to_grid(self.current_x, self.current_y)
-        if gx is None or self.map_data is None:
-            return  # no pose yet — keep last cached value
-
-        ig = self.information_gain(gx, gy, self.ig_sensor_range)
-
-        res     = self.map_info.resolution
-        r_cells = int(math.ceil(self.ig_sensor_range / res))
-        disc_area = math.pi * float(r_cells ** 2)          # cells, float
-        rho = min(ig / max(disc_area, 1.0), 1.0)   # clamp to [0, 1]
-
-        gamma2 = gamma_min + (gamma_max - gamma_min) * (1.0 - rho)
-        self._adaptive_gamma2_value = gamma2
-        self.cbf.gamma2 = gamma2                    # hot-patch the live CBF object
-
-        msg = Float32(); msg.data = float(gamma2)
-        self.metrics_cbf_gamma2_pub.publish(msg)
-
-        self.get_logger().info(
-            f"Adaptive γ₂={gamma2:.3f}  ρ={rho:.3f}  "
-            f"IG={ig:.0f} cells  disc={disc_area:.0f} cells",
-            throttle_duration_sec=2.0)
-        
     def map_cb(self, msg):
         self.map_info = msg.info
         raw = np.array(msg.data, dtype=np.int8).reshape(
@@ -738,14 +709,14 @@ class AutonomousExplorer(Node):
         self.sdf_obs = build_sdf_obstacle(raw, msg.info.resolution)
         self.sdf_unk = build_sdf_frontier(raw, msg.info.resolution,
                                            self.cbf.min_cluster_cells)
-        self._update_adaptive_gamma2()          
+        
         self._publish_inflated_map(msg)
     
     def goal_cb(self, msg):
         self.goal_x = msg.pose.position.x
         self.goal_y = msg.pose.position.y
         self.current_waypoint_idx = 0
-        self.autonomous_mode = False 
+        self.autonomous_mode = False # Disable auto-exploration
         # self.motion_state = "FORWARD"
         self.get_logger().info(f"Manual Goal Set: ({self.goal_x:.1f}, {self.goal_y:.1f})")
         self.get_logger().info(" Autonomous exploration PAUSED")
@@ -754,6 +725,12 @@ class AutonomousExplorer(Node):
     def other_drone_pose_cb(self, msg: PoseWithCovarianceStamped):
         self.other_drone_x = msg.pose.pose.position.x + self.other_drone_init_x
         self.other_drone_y = msg.pose.pose.position.y + self.other_drone_init_y
+        dist = math.hypot(
+            self.current_x - self.other_drone_x,
+            self.current_y - self.other_drone_y,
+        )
+        msg_f = Float32(); msg_f.data = float(dist)
+        self.metrics_drone_dist_pub.publish(msg_f)
         self.get_logger().debug(
             f"Other drone at ({self.other_drone_x:.2f}, {self.other_drone_y:.2f}) "
             f"[raw=({msg.pose.pose.position.x:.2f}, {msg.pose.pose.position.y:.2f}) "
@@ -862,35 +839,28 @@ class AutonomousExplorer(Node):
             if dist > 1.0:  # Still navigating to current frontier
                 return
         
-        best_frontier = None
+        # Find frontiers
         frontiers = []
         for radius in self.frontier_search_radii:
             frontiers = self.find_frontiers(search_radius=radius if radius > 0 else None)
-            if not frontiers:
-                continue
-            self.get_logger().info(
-                f"Frontiers found at radius: "
-                f"{'full map' if radius < 0 else f'{radius:.1f} m'}"
-            )
-            best_frontier = self.select_best_frontier(frontiers)
-            if best_frontier is not None:
-                break
-            self.get_logger().warn(
-                    f"All frontiers at "
+
+            self._publish_partition_viz()
+            if frontiers:
+                self.get_logger().info(
+                    f"Frontiers found at radius: "
                     f"{'full map' if radius < 0 else f'{radius:.1f} m'}"
-                    f" rejected — expanding search radius"
-            )
+                )
+                break        
 
         msg_i = Int32(); msg_i.data = len(frontiers)
         self.metrics_frontier_count_pub.publish(msg_i)
-
         if not frontiers:
             self.get_logger().warn("No frontiers found!")
             return
-        if best_frontier is None:
-            self.get_logger().warn("Frontiers found but all rejected at all radii!")
-            return
-
+        
+        # Select best frontier
+        best_frontier = self.select_best_frontier(frontiers)
+        
         if best_frontier:
             self.goal_x, self.goal_y = best_frontier
             self.autonomous_mode = True
@@ -906,6 +876,10 @@ class AutonomousExplorer(Node):
             
             # Trigger immediate replan
             self.rrt_replan()
+
+            if self._partition_rotation_deg != 0.0:
+                self._partition_rotation_deg = 0.0
+                self.get_logger().info("Partition rotation reset to 0° (frontier found)")
     
     def find_frontiers(self, search_radius=None):
         """
@@ -944,7 +918,7 @@ class AutonomousExplorer(Node):
         labeled, num_features = ndimage.label(frontier_mask)
         
         # 4. Extract frontier clusters
-        frontiers = []
+        all_clusters = []
         
         for label_id in range(1, num_features + 1):
             cluster = np.argwhere(labeled == label_id)
@@ -960,10 +934,29 @@ class AutonomousExplorer(Node):
                 world_points.append((wx, wy))
             
             # Store cluster
-            frontiers.append(world_points)
+            all_clusters.append(world_points)
+        partitioned_clusters = []
+        for cluster in all_clusters:
+            cx_w = sum(p[0] for p in cluster) / len(cluster)
+            cy_w = sum(p[1] for p in cluster) / len(cluster)
+            if self._is_on_my_side(cx_w, cy_w):
+                partitioned_clusters.append(cluster)
+
+        n_all  = len(all_clusters)
+        n_kept = len(partitioned_clusters)
+
+        if n_all > 0 and n_kept == 0:
+            self.get_logger().warn(
+                f"All {n_all} frontier(s) on other drone's side — rotating partition"
+            )
+            self._rotate_partition()
+            return []
         
-        self.get_logger().info(f"Found {len(frontiers)} frontier clusters")
-        return frontiers
+        self.get_logger().info(
+            f"Frontiers: {n_all} total, {n_kept} on my side"
+        )       
+        return partitioned_clusters
+
     
     def select_best_frontier(self, frontiers):
         """
@@ -1042,7 +1035,54 @@ class AutonomousExplorer(Node):
             if dist < threshold:
                 return True
         return False
+    
+    def _get_partition_normal(self):
+        ox = self.other_drone_x
+        oy = self.other_drone_y
+        if ox is None or oy is None:
+            return None, None
 
+        mx = (self.current_x + ox) / 2.0
+        my = (self.current_y + oy) / 2.0
+
+        dx = ox - self.current_x
+        dy = oy - self.current_y
+        dist = math.hypot(dx, dy)
+        if dist < 1e-4:
+            return None, None
+
+        nx0 = -dx / dist
+        ny0 = -dy / dist
+
+        theta = math.radians(self._partition_rotation_deg)
+        cos_t = math.cos(theta)
+        sin_t = math.sin(theta)
+        nx = cos_t * nx0 - sin_t * ny0
+        ny = sin_t * nx0 + cos_t * ny0
+
+        return (mx, my), (nx, ny)
+    
+    def _is_on_my_side(self, cx, cy):
+        result = self._get_partition_normal()
+        if result[0] is None:
+            return True
+
+        (mx, my), (nx, ny) = result
+        dot = (cx - mx) * nx + (cy - my) * ny
+        return dot >= 0.0
+    
+    def _rotate_partition(self):
+        self._partition_rotation_deg += self._partition_rotation_step
+
+        if self._partition_rotation_deg > self._partition_max_rotation:
+            self._partition_rotation_deg = 0.0
+            self.get_logger().info("Partition rotation reset to 0° (max rotation reached)")
+        else:
+            self.get_logger().info(
+                f"Partition rotated to {self._partition_rotation_deg:.0f}°  "
+                f"(step={self._partition_rotation_step:.0f}°, "
+                f"max={self._partition_max_rotation:.0f}°)"
+            )
 
     # ==================== RRT* GLOBAL PLANNER ====================
     
@@ -1163,10 +1203,8 @@ class AutonomousExplorer(Node):
             new_node = RRTNode(new_x, new_y)
             
             # Find nearby nodes
-            gamma = 3.0
-            radius = gamma * math.sqrt(math.log(len(nodes) + 1) / (len(nodes) + 1))
-            radius = max(radius, self.rrt_step_size * 1.5) 
-            nearby = [n for n in nodes if math.hypot(n.x - new_x, n.y - new_y) < radius]            
+            nearby = [n for n in nodes if math.hypot(n.x - new_x, n.y - new_y) < self.rrt_radius]
+            
             # Choose best parent
             min_cost = nearest.cost + math.hypot(new_x - nearest.x, new_y - nearest.y)
             best_parent = nearest
@@ -1209,7 +1247,6 @@ class AutonomousExplorer(Node):
             path.append((current.x, current.y))
             current = current.parent
         path.reverse()
-        path = self._smooth_path(path)  
 
         solve_ms = (time.monotonic() - _t_start) * 1000.0
         msg_f = Float32(); msg_f.data = float(solve_ms)
@@ -1218,32 +1255,9 @@ class AutonomousExplorer(Node):
         self.metrics_rrt_iters_pub.publish(msg_i)
         return path
     
-    def _smooth_path(self, path):
-        """
-        Greedy line-of-sight shortcutting.
-        Removes intermediate waypoints if the direct segment is collision-free.
-        """
-        if len(path) <= 2:
-            return path
-
-        smoothed = [path[0]]
-        i = 0
-
-        while i < len(path) - 1:
-            # Try to connect current point to as far ahead as possible
-            j = len(path) - 1
-            while j > i + 1:
-                if self.is_collision_free(path[i][0], path[i][1],
-                                        path[j][0], path[j][1]):
-                    break
-                j -= 1
-            smoothed.append(path[j])
-            i = j
-
-        return smoothed
-
     def sample_free(self):
-        if self._free_cells_cache is None or len(self._free_cells_cache) == 0:
+        free = self._free_cells_cache
+        if free is None or len(free) == 0:
             return (self.current_x, self.current_y)
         idx = random.randint(0, len(self._free_cells_cache) - 1)
         gy, gx = self._free_cells_cache[idx]
@@ -1285,54 +1299,7 @@ class AutonomousExplorer(Node):
                 return False
         
         return True
-    def information_gain_cone(self,
-                                cx: int, cy: int,
-                                facing_angle: float,
-                                sensor_range_m: float,
-                                fov_rad: float = math.radians(80.0)) -> float:
-        """
-        Count unknown cells within a forward-facing cone.
-
-        cx, cy       : grid cell of the candidate frontier centroid
-        facing_angle : direction drone will face = atan2(frontier - current pos)
-        sensor_range_m: how far the camera sees (use ig_sensor_range param)
-        fov_rad      : horizontal FOV of your camera (OAK-D Pro W ~ 80 deg)
-        """
-        if self.map_data is None:
-            return 0.0
-
-        res     = self.map_info.resolution
-        H, W    = self.map_data.shape
-        r_cells = int(math.ceil(sensor_range_m / res))
-
-        row_lo = max(0, cy - r_cells)
-        row_hi = min(H, cy + r_cells + 1)
-        col_lo = max(0, cx - r_cells)
-        col_hi = min(W, cx + r_cells + 1)
-
-        patch = self.map_data[row_lo:row_hi, col_lo:col_hi]
-
-        rows = np.arange(row_lo, row_hi) - cy
-        cols = np.arange(col_lo, col_hi) - cx
-        dr, dc = np.meshgrid(rows, cols, indexing='ij')
-
-        # angle of each cell relative to the candidate viewpoint
-        cell_angles = np.arctan2(dr, dc)
-
-        # angular difference from facing direction, wrapped to [-pi, pi]
-        angle_diff = np.arctan2(
-            np.sin(cell_angles - facing_angle),
-            np.cos(cell_angles - facing_angle)
-        )
-
-        dist_cells = np.sqrt(dr ** 2 + dc ** 2)
-
-        mask = (
-            (patch == -1) &
-            (dist_cells <= r_cells) &
-            (np.abs(angle_diff) <= fov_rad / 2.0)
-        )
-        return float(np.sum(mask))
+    
     # ==================== POTENTIAL FIELD LOCAL CONTROLLER ====================
     
     def potential_field_control(self):
@@ -1452,8 +1419,6 @@ class AutonomousExplorer(Node):
         gx_cell, gy_cell = self.world_to_grid(self.current_x, self.current_y)
 
         if gx_cell is not None and self.sdf_obs is not None:
-
-            _cbf_t0 = time.monotonic()
             cbf_result = self.cbf.filter(
                 u_des   = np.array([vx, vy]),
                 sdf_obs = self.sdf_obs,
@@ -1462,11 +1427,7 @@ class AutonomousExplorer(Node):
                 gy      = gy_cell,
                 res     = self.map_info.resolution,
             )
-            _cbf_solve_us = (time.monotonic() - _cbf_t0) * 1e6
-
-            msg_f = Float32(); msg_f.data = float(_cbf_solve_us)
-            self.metrics_cbf_solve_time_pub.publish(msg_f)
-            
+ 
             vx = float(cbf_result.u_safe[0])
             vy = float(cbf_result.u_safe[1])
  
@@ -1527,10 +1488,8 @@ class AutonomousExplorer(Node):
         if self.check_if_stuck():
             self.get_logger().warn("Stuck , clearing waypoints to force replan")
             self.waypoints = []
-            self.goal_x = None
             self.publish_zero_velocity()
             return
-        
         
         self._publish_apf_markers()
 
@@ -1650,8 +1609,21 @@ class AutonomousExplorer(Node):
         dy = self.current_y - self.other_drone_y
         dist = max(math.hypot(dx, dy), 0.05)
         
+        msg_f = Float32(); msg_f.data = float(dist)
+        self.metrics_drone_dist_pub.publish(msg_f)
+        
         if dist >= self.other_drone_safety_radius:
+
+            msg_b = Bool(); msg_b.data = False
+            self.metrics_drone_in_radius_pub.publish(msg_b)
+            msg_f = Float32(); msg_f.data = 0.0
+            self.metrics_drone_rep_pub.publish(msg_f)
+            msg_b = Bool(); msg_b.data = False
+            self.metrics_drone_active_pub.publish(msg_b)
             return (0.0, 0.0)
+        
+        msg_b = Bool(); msg_b.data = True
+        self.metrics_drone_in_radius_pub.publish(msg_b)
         
         d0 = self.other_drone_safety_radius
         scalar = self.k_rep_drone * (1.0 / dist - 1.0 / d0) / (dist ** 2)
@@ -1671,6 +1643,12 @@ class AutonomousExplorer(Node):
             f"[DRONE PROXIMITY] dist={dist:.2f} m  repulsion=({fx:.2f}, {fy:.2f})",
             throttle_duration_sec=1.0,
         )
+
+        msg_f = Float32(); msg_f.data = float(math.hypot(fx, fy))
+        self.metrics_drone_rep_pub.publish(msg_f)
+        msg_b = Bool(); msg_b.data = True
+        self.metrics_drone_active_pub.publish(msg_b)
+
         return (fx, fy)
         # ==================== VISUALIZATION ====================
     
@@ -1765,24 +1743,17 @@ class AutonomousExplorer(Node):
         msg = Twist()
         msg.linear.x = vx
         msg.linear.y = vy
-        msg.linear.z = 0.0 
         msg.angular.z = yaw_rate
         self.vel_pub.publish(msg)
     
     def publish_zero_velocity(self):
-        self.publish_velocity(0.0, 0.0, 0.0)
+        self.publish_velocity(0.0, 0.0)
     
     def _compute_tracking_error(self) -> float:
         """
         Perpendicular distance from current position to the
         nearest segment of the current RRT* waypoint path.
         """
-        if self._last_replan_time is None:
-            return 0.0
-        elapsed = (self.get_clock().now() - self._last_replan_time).nanoseconds / 1e9
-        if elapsed < 2.0:
-            return 0.0
-        
         if len(self.waypoints) < 2 or self.current_waypoint_idx >= len(self.waypoints):
             return 0.0
 
@@ -2084,9 +2055,8 @@ class AutonomousExplorer(Node):
             m.text = (
                 f"h1={cbf_result.h1:.2f}  phi1={cbf_result.phi1:.2f}m\n"
                 f"h2={h2_str}  phi2={phi2_str}m\n"
-                f"slack={cbf_result.slack:.3f} γ₂={self.cbf.gamma2:.3f}\n"
-                + (f"\n{flags.strip()}" if flags.strip() else "")  
-                )
+                f"slack={cbf_result.slack:.3f}{flags}"
+            )
             m.color = ColorRGBA(r=1.0, g=1.0, b=1.0, a=1.0)
             markers.markers.append(m)
 
@@ -2112,6 +2082,72 @@ class AutonomousExplorer(Node):
                 markers.markers.append(m)
 
             self.cbf_viz_pub.publish(markers)
+    def _publish_partition_viz(self):
+        if self.map_info is None:
+            return
+
+        result = self._get_partition_normal()
+        if result[0] is None:
+            return
+
+        (mx, my), (nx, ny) = result
+        lx, ly = -ny, nx
+        half_len = 20.0
+
+        markers = MarkerArray()
+        now = self.get_clock().now().to_msg()
+
+        # Line along the partition
+        m = Marker()
+        m.header.frame_id = self.map_frame
+        m.header.stamp = now
+        m.ns = "partition"
+        m.id = 0
+        m.type = Marker.LINE_STRIP
+        m.action = Marker.ADD
+        m.scale.x = 0.08
+        p1 = Point(); p1.x = mx - lx * half_len; p1.y = my - ly * half_len; p1.z = 0.5
+        p2 = Point(); p2.x = mx + lx * half_len; p2.y = my + ly * half_len; p2.z = 0.5
+        m.points = [p1, p2]
+        if self._partition_rotation_deg < 1e-3:
+            m.color = ColorRGBA(r=0.0, g=1.0, b=0.2, a=0.8)
+        else:
+            t = min(self._partition_rotation_deg / self._partition_max_rotation, 1.0)
+            m.color = ColorRGBA(r=t, g=1.0 - t * 0.5, b=0.0, a=0.8)
+        markers.markers.append(m)
+
+        # Arrow pointing toward this drone's side
+        m2 = Marker()
+        m2.header.frame_id = self.map_frame
+        m2.header.stamp = now
+        m2.ns = "partition"
+        m2.id = 1
+        m2.type = Marker.ARROW
+        m2.action = Marker.ADD
+        arrow_len = 1.5
+        m2.points = [
+            Point(x=mx, y=my, z=0.5),
+            Point(x=mx + nx * arrow_len, y=my + ny * arrow_len, z=0.5),
+        ]
+        m2.scale.x = 0.06; m2.scale.y = 0.12; m2.scale.z = 0.10
+        m2.color = ColorRGBA(r=0.0, g=0.8, b=1.0, a=0.9)
+        markers.markers.append(m2)
+
+        # Text showing rotation angle
+        m3 = Marker()
+        m3.header.frame_id = self.map_frame
+        m3.header.stamp = now
+        m3.ns = "partition"
+        m3.id = 2
+        m3.type = Marker.TEXT_VIEW_FACING
+        m3.action = Marker.ADD
+        m3.pose.position.x = mx; m3.pose.position.y = my; m3.pose.position.z = 1.0
+        m3.scale.z = 0.20
+        m3.text = f"partition\nrot={self._partition_rotation_deg:.0f}°"
+        m3.color = ColorRGBA(r=1.0, g=1.0, b=1.0, a=1.0)
+        markers.markers.append(m3)
+
+        self.partition_viz_pub.publish(markers)
         
 def main():
 
