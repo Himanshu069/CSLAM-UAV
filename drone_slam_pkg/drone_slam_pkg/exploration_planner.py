@@ -241,7 +241,6 @@ class TanhDualCBF:
                  g2^T u >= b2 - delta,  delta >= 0
  
         Solved by bisection on delta in [0, delta_max].
-        Provides ISSf bound (Romdlony & Jayawardhana 2016):
             h_i(t) >= h_i(0)*exp(-gamma_i*t)
                      - integral_0^t exp(-gamma_i*(t-s)) * delta*(s) ds
  
@@ -620,20 +619,20 @@ class AutonomousExplorer(Node):
         self.current_y = msg.x
         self.current_z = msg.z
         
-        if not self.altitude_ready:
-            self.get_logger().info(
-                "Waiting for takeoff... current altitude: %.2f m" % -self.current_z,
-                throttle_duration_sec=2.0
-            )
-            if (-self.current_z) >= self.takeoff_altitude *0.85:
-                self.altitude_ready = True
-                self.last_position = (self.current_x, self.current_y)  
-                self._exploration_start_time = self.get_clock().now() 
-                self.get_logger().info(
-                    f"Takeoff altitude reached: {(-self.current_z):.2f} m"
-            )
-            else:
-                return  
+       # if not self.altitude_ready:
+       #     self.get_logger().info(
+       #         "Waiting for takeoff... current altitude: %.2f m" % -self.current_z,
+       #         throttle_duration_sec=2.0
+       #     )
+       #     if (-self.current_z) >= self.takeoff_altitude *0.85:
+        self.altitude_ready = True
+       #         self.last_position = (self.current_x, self.current_y)  
+       #         self._exploration_start_time = self.get_clock().now() 
+       #         self.get_logger().info(
+       #             f"Takeoff altitude reached: {(-self.current_z):.2f} m"
+       #     )
+       #     else:
+       #         return  
             
         dx = self.current_x - self.last_position[0]
         dy = self.current_y - self.last_position[1]
@@ -701,12 +700,13 @@ class AutonomousExplorer(Node):
         if gx is None or self.map_data is None:
             return  # no pose yet — keep last cached value
 
-        ig = self.information_gain(gx, gy, self.ig_sensor_range)
+        ig = self.information_gain_cone(gx, gy, self.ig_sensor_range)
 
         res     = self.map_info.resolution
         r_cells = int(math.ceil(self.ig_sensor_range / res))
-        disc_area = math.pi * float(r_cells ** 2)          # cells, float
-        rho = min(ig / max(disc_area, 1.0), 1.0)   # clamp to [0, 1]
+        fov_rad   = math.radians(80.0)                              
+        cone_area = (fov_rad / (2.0 * math.pi)) * math.pi * float(r_cells ** 2)
+        rho = min(ig / max(cone_area, 1.0), 1.0)   
 
         gamma2 = gamma_min + (gamma_max - gamma_min) * (1.0 - rho)
         self._adaptive_gamma2_value = gamma2
@@ -1385,8 +1385,8 @@ class AutonomousExplorer(Node):
 
         f_rep_drone = self.repulsive_force_other_drone()
 
-        fx = f_att[0] + f_rep[0] + f_rep_drone[0]
-        fy = f_att[1] + f_rep[1] + f_rep_drone[1]
+        fx = f_att[0] + f_rep[0] 
+        fy = f_att[1] + f_rep[1] 
 
         att_mag = math.hypot(*f_att)
         rep_mag = math.hypot(*f_rep)
