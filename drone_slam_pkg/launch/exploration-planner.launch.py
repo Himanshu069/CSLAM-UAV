@@ -14,13 +14,13 @@ def generate_launch_description():
 
         Node(
             package='drone_slam_pkg',
-            executable='exploration_planner',
+            executable='baseline_exploration_planner',
             name='exploration_planner_0',
             namespace='x500_drone_0',
             output='screen',
             parameters = [
                 {
-                    "drone_radius": 0.26,
+                    "drone_radius": 0.25,
                     # "other_drone_pose_topic": '/x500_drone_1/localization_pose',
                     # "other_drone_safety_radius": 3,
                     # "other_drone_init_x": 2.0 ,
@@ -43,7 +43,7 @@ def generate_launch_description():
             output='screen',
             parameters=[
                 {
-                    "log_dir": os.path.expanduser("~/exploration_logs"),
+                    "log_dir": os.path.expanduser("~/sim_exploration_logs"),
                     "drone_namespace": "x500_drone_0",
                 }
             ],

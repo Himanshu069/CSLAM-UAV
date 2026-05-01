@@ -24,19 +24,19 @@ def generate_launch_description():
                 ("/cmd_vel","/x500_drone_0/cmd_vel"), 
             ]
         ),
-        Node(
-            package='px4_ros_com',
-            executable='offboard_cmd_vel',
-            name='drone_1_control',
-            namespace='x500_drone_1',
-            output='screen',
-            parameters =[
-                {"use_sim_time": True}
-            ],
-            remappings=[
-                ("/cmd_vel","/x500_drone_1/cmd_vel"), 
-            ]
-        ),
+        # Node(
+        #     package='px4_ros_com',
+        #     executable='offboard_cmd_vel',
+        #     name='drone_1_control',
+        #     namespace='x500_drone_1',
+        #     output='screen',
+        #     parameters =[
+        #         {"use_sim_time": True}
+        #     ],
+        #     remappings=[
+        #         ("/cmd_vel","/x500_drone_1/cmd_vel"), 
+        #     ]
+        # ),
         # # Node(
         #     package='rviz2',
         #     namespace='',

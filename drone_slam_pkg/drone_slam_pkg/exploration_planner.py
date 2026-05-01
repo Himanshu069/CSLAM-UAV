@@ -516,6 +516,11 @@ class AutonomousExplorer(Node):
         self._last_coverage_time = self.get_clock().now()
         self._running_min_clearance = float('inf')
 
+        self._obstacle_violation_count = 0   # phi1 < d_safe each PF tick
+        self._frontier_violation_count = 0   # phi2 < d_stop each PF tick
+        self._running_min_phi1 = float('inf')
+        self._running_min_phi2 = float('inf')
+
         self.ig_sensor_range = self.get_parameter("ig_sensor_range").value
 
         qos_map = QoSProfile(
@@ -595,6 +600,17 @@ class AutonomousExplorer(Node):
         self.metrics_cbf_delta_pub      = self.create_publisher(Float32, "metrics/cbf_soft_delta",       10)
         self.metrics_cbf_speed_clip_pub = self.create_publisher(Bool,    "metrics/cbf_speed_clipped",    10)
         self.metrics_cbf_solve_time_pub = self.create_publisher(Float32, "metrics/cbf_solve_time_us", 10)
+        self.metrics_obstacle_violation_pub = self.create_publisher(
+            Int32, "metrics/obstacle_violation_count", 10)
+        self.metrics_frontier_violation_pub = self.create_publisher(
+            Int32, "metrics/frontier_violation_count", 10)
+        self.metrics_min_phi1_pub = self.create_publisher(
+            Float32, "metrics/min_phi1_running", 10)
+        self.metrics_min_phi2_pub = self.create_publisher(
+            Float32, "metrics/min_phi2_running", 10)
+
+
+
         self.cbf_viz_pub = self.create_publisher(MarkerArray, "cbf_viz", 10)
         
         self.frontier_timer = self.create_timer(1.0 / self.frontier_rate, self.frontier_search_loop)
@@ -700,12 +716,13 @@ class AutonomousExplorer(Node):
         if gx is None or self.map_data is None:
             return  # no pose yet — keep last cached value
 
-        ig = self.information_gain(gx, gy, self.ig_sensor_range)
+        ig = self.information_gain_cone(gx, gy, self.ig_sensor_range)
 
         res     = self.map_info.resolution
         r_cells = int(math.ceil(self.ig_sensor_range / res))
-        disc_area = math.pi * float(r_cells ** 2)          # cells, float
-        rho = min(ig / max(disc_area, 1.0), 1.0)   # clamp to [0, 1]
+        fov_rad   = math.radians(80.0)                              
+        cone_area = (fov_rad / (2.0 * math.pi)) * math.pi * float(r_cells ** 2)
+        rho = min(ig / max(cone_area, 1.0), 1.0)   
 
         gamma2 = gamma_min + (gamma_max - gamma_min) * (1.0 - rho)
         self._adaptive_gamma2_value = gamma2
@@ -716,7 +733,7 @@ class AutonomousExplorer(Node):
 
         self.get_logger().info(
             f"Adaptive γ₂={gamma2:.3f}  ρ={rho:.3f}  "
-            f"IG={ig:.0f} cells  disc={disc_area:.0f} cells",
+            f"IG={ig:.0f} cells  disc={cone_area:.0f} cells",
             throttle_duration_sec=2.0)
         
     def map_cb(self, msg):
@@ -1384,8 +1401,8 @@ class AutonomousExplorer(Node):
 
         f_rep_drone = self.repulsive_force_other_drone()
 
-        fx = f_att[0] + f_rep[0] + f_rep_drone[0]
-        fy = f_att[1] + f_rep[1] + f_rep_drone[1]
+        fx = f_att[0] + f_rep[0] 
+        fy = f_att[1] + f_rep[1] 
 
         att_mag = math.hypot(*f_att)
         rep_mag = math.hypot(*f_rep)
@@ -1516,6 +1533,8 @@ class AutonomousExplorer(Node):
             
             self._publish_cbf_viz(cbf_result)
 
+            self._publish_violation_metrics(cbf_result)
+
         desired_yaw = math.atan2(vy, vx)
         yaw_error = desired_yaw - self.current_yaw
         # wrap to [-π, π]
@@ -1547,6 +1566,68 @@ class AutonomousExplorer(Node):
         msg_f = Float32(); msg_f.data = float(tracking_err)
         self.metrics_tracking_error_pub.publish(msg_f)
         self.publish_velocity(vx, vy, yaw_rate)
+
+    def _publish_violation_metrics(self, cbf_result: CBFResult) -> None:
+        """
+        Count safety-violation ticks and publish running-minimum SDF values.
+ 
+        Definition (identical to baseline so logger can compare fairly):
+          obstacle violation : phi1 < d_safe  at the moment the velocity is sent
+          frontier violation : phi2 < d_stop  at the moment the velocity is sent
+ 
+        In the CBF run the filter *should* prevent violations; a non-zero count
+        therefore indicates numerical edge-cases (map resolution, soft-QP slack,
+        etc.) and serves as a ground-truth efficacy check.
+ 
+        Publishes:
+          metrics/obstacle_violation_count  (Int32, cumulative)
+          metrics/frontier_violation_count  (Int32, cumulative)
+          metrics/min_phi1_running          (Float32, metres)
+          metrics/min_phi2_running          (Float32, metres)
+        """
+        phi1 = cbf_result.phi1
+        phi2 = cbf_result.phi2
+ 
+        # ── running minimums ──────────────────────────────────────────────────
+        if phi1 < self._running_min_phi1:
+            self._running_min_phi1 = phi1
+ 
+        if phi2 != float('inf') and phi2 < self._running_min_phi2:
+            self._running_min_phi2 = phi2
+ 
+        # ── violation counters ────────────────────────────────────────────────
+        if phi1 < self.cbf.d_safe:
+            self._obstacle_violation_count += 1
+ 
+        if phi2 != float('inf') and phi2 < self.cbf.d_stop:
+            self._frontier_violation_count += 1
+ 
+        # ── publish ───────────────────────────────────────────────────────────
+        msg_i = Int32()
+        msg_i.data = self._obstacle_violation_count
+        self.metrics_obstacle_violation_pub.publish(msg_i)
+ 
+        msg_i = Int32()
+        msg_i.data = self._frontier_violation_count
+        self.metrics_frontier_violation_pub.publish(msg_i)
+ 
+        msg_f = Float32()
+        msg_f.data = (float(self._running_min_phi1)
+                      if self._running_min_phi1 != float('inf') else 99.0)
+        self.metrics_min_phi1_pub.publish(msg_f)
+ 
+        msg_f = Float32()
+        msg_f.data = (float(self._running_min_phi2)
+                      if self._running_min_phi2 != float('inf') else 99.0)
+        self.metrics_min_phi2_pub.publish(msg_f)
+ 
+        self.get_logger().debug(
+            f"[violations] obs={self._obstacle_violation_count} "
+            f"fro={self._frontier_violation_count} "
+            f"min_phi1={self._running_min_phi1:.3f}m "
+            f"min_phi2={self._running_min_phi2:.3f}m"
+        )
+
     
     def check_if_stuck(self):
         current_time = self.get_clock().now()

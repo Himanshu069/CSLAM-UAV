@@ -24,6 +24,54 @@ from dataclasses import dataclass
 from typing import Optional
 
 
+# ---------------------------------------------------------------------------
+# SDF helpers — identical to full system so phi values are comparable
+# ---------------------------------------------------------------------------
+
+def build_sdf_obstacle(map_data: np.ndarray, resolution: float) -> np.ndarray:
+    """
+    Signed Distance Function to obstacles.
+      phi > 0  free space (distance to nearest obstacle surface, m)
+      phi < 0  inside obstacle
+    Satisfies Eikonal ||grad phi|| = 1 a.e.
+    """
+    obstacle_mask = (map_data >= 65)
+    d_out = ndimage.distance_transform_edt(~obstacle_mask) * resolution
+    d_in  = ndimage.distance_transform_edt( obstacle_mask) * resolution
+    return np.where(obstacle_mask, -d_in, d_out)
+
+
+def build_sdf_frontier(map_data: np.ndarray,
+                       resolution: float,
+                       min_cluster_cells: int = 5) -> Optional[np.ndarray]:
+    """
+    Signed Distance Function to significant unknown-cell clusters.
+    Filters SLAM noise by keeping only connected unknown regions
+    with area >= min_cluster_cells (8-connectivity).
+    Returns None when no significant frontier exists.
+    """
+    unknown_mask = (map_data == -1)
+    if not unknown_mask.any():
+        return None
+
+    struct = ndimage.generate_binary_structure(2, 2)   # 8-connected
+    labeled, n = ndimage.label(unknown_mask, structure=struct)
+
+    filtered = np.zeros_like(unknown_mask, dtype=bool)
+    for lid in range(1, n + 1):
+        if np.sum(labeled == lid) >= min_cluster_cells:
+            filtered |= (labeled == lid)
+
+    if not filtered.any():
+        return None
+
+    d_out = ndimage.distance_transform_edt(~filtered) * resolution
+    d_in  = ndimage.distance_transform_edt( filtered) * resolution
+    return np.where(filtered, -d_in, d_out)
+
+
+# ---------------------------------------------------------------------------
+
 class RRTNode:
     def __init__(self, x, y):
         self.x = x
@@ -78,6 +126,12 @@ class AutonomousExplorer(Node):
             ("other_drone_init_x", 0.0),
             ("other_drone_init_y", 0.0),
             ("frontier_search_radii", [5.0, 10.0, -1.0]),
+
+            # --- CLEARANCE THRESHOLDS (must match full system for fair comparison) ---
+            # These are purely used for violation counting; no filter is applied.
+            ("cbf_d_safe",            0.35),   # obstacle standoff (m)
+            ("cbf_d_stop",            0.35),   # frontier standoff (m)
+            ("cbf_min_cluster_cells", 25),     # min unknown cluster size
         ])
 
         self.map_frame = self.get_parameter("map_frame").value
@@ -124,6 +178,15 @@ class AutonomousExplorer(Node):
         # Safety/costmap
         self.drone_radius = self.get_parameter("drone_radius").value
 
+        # Clearance thresholds for violation counting
+        self.d_safe = self.get_parameter("cbf_d_safe").value
+        self.d_stop = self.get_parameter("cbf_d_stop").value
+        self._cbf_min_cluster_cells = self.get_parameter("cbf_min_cluster_cells").value
+
+        # Violation counters
+        self._obstacle_violation_count = 0
+        self._frontier_violation_count = 0
+
         # Multi-drone avoidance
         self.other_drone_pose_topic = self.get_parameter("other_drone_pose_topic").value
         self.other_drone_safety_radius = self.get_parameter("other_drone_safety_radius").value
@@ -142,6 +205,9 @@ class AutonomousExplorer(Node):
         self.map_data = None
         self.map_info = None
         self.distance_field = None
+        # SDF fields — computed every map_cb for measurement (no filter applied)
+        self.sdf_obs = None
+        self.sdf_unk = None
 
         self.current_x = 0.0
         self.current_y = 0.0
@@ -175,6 +241,8 @@ class AutonomousExplorer(Node):
         self._last_explored_area = 0.0
         self._last_coverage_time = self.get_clock().now()
         self._running_min_clearance = float('inf')
+        self._running_min_phi1 = float('inf')   # min obstacle SDF seen
+        self._running_min_phi2 = float('inf')   # min frontier SDF seen
 
         qos_map = QoSProfile(
             reliability=ReliabilityPolicy.RELIABLE,
@@ -212,7 +280,7 @@ class AutonomousExplorer(Node):
         self.waypoints_pub = self.create_publisher(PoseArray, "rrt_waypoints", qos_path)
         self.apf_markers_pub = self.create_publisher(MarkerArray, "apf_forces", 10)
 
-        # Metrics — identical topics to full system for fair logging comparison
+        # Metrics — identical topics to full system for fair comparison
         self.metrics_coverage_pub = self.create_publisher(Float32, "metrics/coverage_percent", 10)
         self.metrics_coverage_rate_pub = self.create_publisher(Float32, "metrics/coverage_rate", 10)
         self.metrics_area_pub = self.create_publisher(Float32, "metrics/explored_area_m2", 10)
@@ -236,8 +304,9 @@ class AutonomousExplorer(Node):
         self.metrics_replan_pub = self.create_publisher(Bool, "metrics/rrt_replan_triggered", 10)
         self.metrics_tracking_error_pub = self.create_publisher(Float32, "metrics/path_tracking_error_m", 10)
 
-        # CBF metrics published as null/zero so rosbag structure stays identical
-        # (makes post-processing scripts work on both bags without modification)
+        # CBF-equivalent measurement topics
+        # phi1/phi2 carry real SDF distances so the logger can compute violations.
+        # h1/h2/slack/active flags are published as null (no filter exists).
         self.metrics_cbf_h1_pub         = self.create_publisher(Float32, "metrics/cbf_h1",               10)
         self.metrics_cbf_h2_pub         = self.create_publisher(Float32, "metrics/cbf_h2",               10)
         self.metrics_cbf_phi1_pub       = self.create_publisher(Float32, "metrics/cbf_phi1_m",           10)
@@ -250,6 +319,15 @@ class AutonomousExplorer(Node):
         self.metrics_cbf_speed_clip_pub = self.create_publisher(Bool,    "metrics/cbf_speed_clipped",    10)
         self.metrics_cbf_solve_time_pub = self.create_publisher(Float32, "metrics/cbf_solve_time_us",    10)
 
+        # Violation count topics — real values for baseline, not null
+        self.metrics_obstacle_violation_pub = self.create_publisher(
+            Int32, "metrics/obstacle_violation_count", 10)
+        self.metrics_frontier_violation_pub = self.create_publisher(
+            Int32, "metrics/frontier_violation_count", 10)
+        # Running minimum SDF topics for time-series plots
+        self.metrics_min_phi1_pub = self.create_publisher(Float32, "metrics/min_phi1_running", 10)
+        self.metrics_min_phi2_pub = self.create_publisher(Float32, "metrics/min_phi2_running", 10)
+
         self.frontier_timer = self.create_timer(1.0 / self.frontier_rate, self.frontier_search_loop)
         self.rrt_timer = self.create_timer(1.0 / self.rrt_replan_rate, self.rrt_replan)
         self.pf_timer = self.create_timer(1.0 / self.pf_rate, self.potential_field_control)
@@ -260,6 +338,8 @@ class AutonomousExplorer(Node):
         self.get_logger().info("   RRT* Planning: ON")
         self.get_logger().info("   Potential Field Control: ON")
         self.get_logger().info("   CBF Safety Filter: OFF  <-- baseline ablation")
+        self.get_logger().info("   SDF measurement: ON  (phi1/phi2 logged for comparison)")
+        self.get_logger().info(f"   d_safe={self.d_safe:.2f} m  d_stop={self.d_stop:.2f} m")
         self.get_logger().info(f"   Drone radius (inflation): {self.drone_radius:.2f} m")
 
     # ==================== CALLBACKS ====================
@@ -326,6 +406,12 @@ class AutonomousExplorer(Node):
             throttle_duration_sec=5.0)
 
         self._build_distance_field()
+
+        # Build SDFs — identical to full system so phi values are on the same scale
+        self.sdf_obs = build_sdf_obstacle(raw, msg.info.resolution)
+        self.sdf_unk = build_sdf_frontier(raw, msg.info.resolution,
+                                          self._cbf_min_cluster_cells)
+
         self._publish_inflated_map(msg)
 
     def goal_cb(self, msg):
@@ -827,9 +913,8 @@ class AutonomousExplorer(Node):
         vy = (fy / force_mag) * desired_speed
 
         # ── CBF INTENTIONALLY OMITTED ──
-        # Velocity is published directly from APF output.
-        # Publish null CBF metrics so rosbag topics remain consistent.
-        self._publish_null_cbf_metrics()
+        # Publish real phi1/phi2 measurements + null for everything else.
+        self._publish_sdf_metrics()
 
         desired_yaw = math.atan2(vy, vx)
         yaw_error = (desired_yaw - self.current_yaw + math.pi) % (2 * math.pi) - math.pi
@@ -862,20 +947,74 @@ class AutonomousExplorer(Node):
 
         self.publish_velocity(vx, vy, yaw_rate)
 
-    def _publish_null_cbf_metrics(self):
+    def _publish_sdf_metrics(self):
         """
-        Publish zero/false on all CBF metric topics.
-        Keeps rosbag schema identical to the full system so the same
-        post-processing scripts work on both bags without modification.
+        Publish real phi1 (obstacle SDF) and phi2 (frontier SDF) at current pose.
+        Increment violation counters when either threshold is breached.
+        Publish null values for CBF-specific fields (h, slack, active flags).
+
+        This gives the logger identical topic structure to the full system,
+        enabling direct comparison of phi1_m and phi2_m time-series.
         """
+        gx_cell, gy_cell = self.world_to_grid(self.current_x, self.current_y)
+
+        phi1 = float('inf')
+        phi2 = float('inf')
+
+        if gx_cell is not None and self.sdf_obs is not None:
+            phi1 = float(self.sdf_obs[gy_cell, gx_cell])
+
+            # Track running minimum
+            if phi1 < self._running_min_phi1:
+                self._running_min_phi1 = phi1
+
+            # Obstacle violation: drone closer than d_safe to obstacle surface
+            if phi1 < self.d_safe:
+                self._obstacle_violation_count += 1
+
+        if gx_cell is not None and self.sdf_unk is not None:
+            phi2 = float(self.sdf_unk[gy_cell, gx_cell])
+
+            # Track running minimum
+            if phi2 < self._running_min_phi2:
+                self._running_min_phi2 = phi2
+
+            # Frontier violation: drone closer than d_stop to unknown boundary
+            if phi2 < self.d_stop:
+                self._frontier_violation_count += 1
+
+        # Publish phi values (real data)
+        msg_f = Float32()
+        msg_f.data = phi1 if phi1 != float('inf') else 99.0
+        self.metrics_cbf_phi1_pub.publish(msg_f)
+
+        msg_f = Float32()
+        msg_f.data = phi2 if phi2 != float('inf') else 99.0
+        self.metrics_cbf_phi2_pub.publish(msg_f)
+
+        # Running minimums
+        msg_f = Float32()
+        msg_f.data = float(self._running_min_phi1) if self._running_min_phi1 != float('inf') else 99.0
+        self.metrics_min_phi1_pub.publish(msg_f)
+
+        msg_f = Float32()
+        msg_f.data = float(self._running_min_phi2) if self._running_min_phi2 != float('inf') else 99.0
+        self.metrics_min_phi2_pub.publish(msg_f)
+
+        # Violation counts
+        msg_i = Int32(); msg_i.data = self._obstacle_violation_count
+        self.metrics_obstacle_violation_pub.publish(msg_i)
+
+        msg_i = Int32(); msg_i.data = self._frontier_violation_count
+        self.metrics_frontier_violation_pub.publish(msg_i)
+
+        # Null CBF-specific fields — keeps rosbag schema identical
         zero_f = Float32(); zero_f.data = 0.0
         zero_i = Int32(); zero_i.data = 0
         false_b = Bool(); false_b.data = False
 
         self.metrics_cbf_h1_pub.publish(zero_f)
         self.metrics_cbf_h2_pub.publish(zero_f)
-        self.metrics_cbf_phi1_pub.publish(zero_f)
-        self.metrics_cbf_phi2_pub.publish(zero_f)
         self.metrics_cbf_slack_pub.publish(zero_f)
         self.metrics_cbf1_active_pub.publish(false_b)
         self.metrics_cbf2_active_pub.publish(false_b)

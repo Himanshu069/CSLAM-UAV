@@ -9,15 +9,20 @@ Output structure (one folder per run):
     coverage.csv          — (t, coverage_%, explored_area_m2, coverage_rate, path_efficiency)
     path.csv              — (t, path_length_m, avg_speed)
     planning.csv          — (t, rrt_solve_ms, rrt_iterations, rrt_failed, frontier_count)
-    safety.csv            — (t, clearance_m, min_clearance_running, hard_brake_count, force_ratio)
-    events.csv            — (t, event_type)   [stuck, escape, replan]
+    safety.csv            — (t, clearance_m, min_clearance_running, apf_force_ratio,
+                               tracking_error_m, phi1_m, phi2_m)
+    cbf.csv               — (t, h1, h2, phi1_m, phi2_m, slack, cbf1_active, cbf2_active,
+                               speed_clipped, soft_delta, gamma2,
+                               obs_violation_count, fro_violation_count)
+    events.csv            — (t, event_type)   [stuck, escape, replan, cbf_infeasible,
+                                                cbf_speed_clipped, obs_violation, fro_violation]
     apf_internal.csv      — (t, local_min_count)
     summary.json          — aggregated stats written on shutdown
 """
 
 import rclpy
 from rclpy.node import Node
-from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy,HistoryPolicy
+from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy, HistoryPolicy
 from std_msgs.msg import Float32, Int32, Bool
 import statistics
 from nav_msgs.msg import Path
@@ -25,7 +30,6 @@ from px4_msgs.msg import VehicleLocalPosition
 import json
 import os
 import csv
-import json
 from datetime import datetime
 
 
@@ -34,10 +38,10 @@ class ExplorationLogger(Node):
         super().__init__("exploration_logger")
 
         self.declare_parameter("log_dir", "logs")
-        self.declare_parameter("drone_namespace", "")   # e.g. "drone_0" or ""
+        self.declare_parameter("drone_namespace", "")
 
         log_base   = self.get_parameter("log_dir").value
-        self.ns    = self.get_parameter("drone_namespace").value  # prefix for multi-drone
+        self.ns    = self.get_parameter("drone_namespace").value
 
         timestamp  = datetime.now().strftime("%Y%m%d_%H%M%S")
         run_name   = f"run_{timestamp}" if not self.ns else f"run_{self.ns}_{timestamp}"
@@ -53,11 +57,16 @@ class ExplorationLogger(Node):
         self._open_csv("path",        ["t", "path_length_m", "avg_speed_ms"])
         self._open_csv("planning",    ["t", "rrt_solve_ms", "rrt_iterations",
                                        "rrt_failed", "frontier_count"])
+        # safety.csv now includes phi1_m and phi2_m for direct time-series comparison
         self._open_csv("safety",      ["t", "clearance_m", "min_clearance_running_m",
-                                        "apf_force_ratio","tracking_error_m"])
+                                       "apf_force_ratio", "tracking_error_m",
+                                       "phi1_m", "phi2_m",
+                                       "min_phi1_running_m", "min_phi2_running_m"])
+        # cbf.csv includes violation counters — both systems publish these topics
         self._open_csv("cbf",          ["t", "h1", "h2", "phi1_m", "phi2_m",
                                         "slack", "cbf1_active", "cbf2_active",
-                                        "speed_clipped", "soft_delta", "gamma2"])
+                                        "speed_clipped", "soft_delta", "gamma2",
+                                        "obs_violation_count", "fro_violation_count"])
         self._open_csv("events",      ["t", "event_type"])
         self._open_csv("apf_internal",["t", "local_min_count"])
 
@@ -68,14 +77,14 @@ class ExplorationLogger(Node):
         self._last_area          = 0.0
         self._last_rate          = 0.0
         self._last_efficiency    = 0.0
-        self._coverage_samples   = []          # list of (t, pct) for curve
+        self._coverage_samples   = []
 
         # path
         self._last_path_length   = 0.0
         self._last_avg_speed     = 0.0
 
         # planning
-        self._rrt_times          = []          # ms per call
+        self._rrt_times          = []
         self._rrt_iters          = []
         self._rrt_fail_count     = 0
         self._last_frontier_count= 0
@@ -85,14 +94,20 @@ class ExplorationLogger(Node):
         self._global_min_clear   = float('inf')
         self._last_force_ratio   = 0.0
         self._force_ratio_samples= []
-        self._last_tracking_error = 0.0
-        self._tracking_error_samples = [] 
+        self._last_tracking_error= 0.0
+        self._tracking_error_samples = []
 
-        # ── CBF state ──
-        self._last_h1            = 0.0
-        self._last_h2            = 0.0
+        # phi fields (shared between CBF and baseline runs)
         self._last_phi1          = 0.0
         self._last_phi2          = 0.0
+        self._last_min_phi1      = 99.0
+        self._last_min_phi2      = 99.0
+        self._phi1_samples       = []
+        self._phi2_samples       = []
+
+        # CBF state
+        self._last_h1            = 0.0
+        self._last_h2            = 0.0
         self._last_cbf_slack     = 0.0
         self._last_cbf1_active   = False
         self._last_cbf2_active   = False
@@ -102,7 +117,6 @@ class ExplorationLogger(Node):
 
         self._last_gamma2        = 0.0
         self._gamma2_samples     = []
-        
         self._cbf_solve_us_samples = []
         self._last_cbf_solve_us = 0.0
 
@@ -112,25 +126,30 @@ class ExplorationLogger(Node):
         self._cbf_slack_samples  = []
         self._cbf_phi1_samples   = []
         self._cbf_phi2_samples   = []
-        self._cbf1_active_count  = 0   
-        self._cbf2_active_count  = 0   
+        self._cbf1_active_count  = 0
+        self._cbf2_active_count  = 0
         self._cbf_speed_clip_count = 0
-        self._cbf_total_ticks    = 0  
+        self._cbf_total_ticks    = 0
+
+        # Violation counts (real in both systems after this patch)
+        self._last_obs_violation_count = 0
+        self._last_fro_violation_count = 0
+        self._prev_obs_violation_count = 0   # for event edge detection
+        self._prev_fro_violation_count = 0
 
         # events
         self._stuck_count        = 0
         self._escape_count       = 0
         self._replan_count       = 0
 
-        self._actual_trajectory = []
-        self._rrt_paths = []
+        self._actual_trajectory  = []
+        self._rrt_paths          = []
 
         qos = QoSProfile(
             reliability=ReliabilityPolicy.BEST_EFFORT,
             history=HistoryPolicy.KEEP_LAST,
             depth=10,
         )
-
         qos_px4 = QoSProfile(
             reliability=ReliabilityPolicy.BEST_EFFORT,
             durability=DurabilityPolicy.TRANSIENT_LOCAL,
@@ -143,6 +162,7 @@ class ExplorationLogger(Node):
             history=HistoryPolicy.KEEP_LAST,
             depth=1,
         )
+
         def topic(name):
             return f"/{self.ns}/{name}" if self.ns else f"/{name}"
 
@@ -155,10 +175,9 @@ class ExplorationLogger(Node):
                                  self._cb_coverage_rate,  qos)
         self.create_subscription(Float32, topic("metrics/path_efficiency"),
                                  self._cb_efficiency,     qos)
-        
         self.create_subscription(Float32, topic("metrics/path_tracking_error_m"),
-                         self._cb_tracking_error, qos)
-        
+                                 self._cb_tracking_error, qos)
+
         # Path
         self.create_subscription(Float32, topic("metrics/path_length_m"),
                                  self._cb_path_length,    qos)
@@ -182,32 +201,45 @@ class ExplorationLogger(Node):
                                  self._cb_min_clearance,  qos)
         self.create_subscription(Float32, topic("metrics/apf_force_ratio"),
                                  self._cb_force_ratio,    qos)
-        
+
+        # CBF / measurement topics (real phi values in both systems)
         self.create_subscription(Float32, topic("metrics/cbf_h1"),
-                                  self._cb_cbf_h1,             qos)
+                                 self._cb_cbf_h1,             qos)
         self.create_subscription(Float32, topic("metrics/cbf_h2"),
-                                  self._cb_cbf_h2,             qos)
+                                 self._cb_cbf_h2,             qos)
         self.create_subscription(Float32, topic("metrics/cbf_phi1_m"),
-                                  self._cb_cbf_phi1,           qos)
+                                 self._cb_cbf_phi1,           qos)
         self.create_subscription(Float32, topic("metrics/cbf_phi2_m"),
-                                  self._cb_cbf_phi2,           qos)
+                                 self._cb_cbf_phi2,           qos)
         self.create_subscription(Float32, topic("metrics/cbf_slack"),
-                                  self._cb_cbf_slack,          qos)
+                                 self._cb_cbf_slack,          qos)
         self.create_subscription(Bool,    topic("metrics/cbf1_obstacle_active"),
-                                  self._cb_cbf1_active,        qos)
+                                 self._cb_cbf1_active,        qos)
         self.create_subscription(Bool,    topic("metrics/cbf2_frontier_active"),
-                                  self._cb_cbf2_active,        qos)
+                                 self._cb_cbf2_active,        qos)
         self.create_subscription(Int32,   topic("metrics/cbf_infeasible_count"),
-                                  self._cb_cbf_infeasible,     qos)
+                                 self._cb_cbf_infeasible,     qos)
         self.create_subscription(Float32, topic("metrics/cbf_soft_delta"),
-                                  self._cb_cbf_delta,          qos)
+                                 self._cb_cbf_delta,          qos)
         self.create_subscription(Bool,    topic("metrics/cbf_speed_clipped"),
-                                  self._cb_cbf_speed_clipped,  qos)
+                                 self._cb_cbf_speed_clipped,  qos)
         self.create_subscription(Float32, topic("metrics/cbf_solve_time_us"),
-                         self._cb_cbf_solve_time, qos)
+                                 self._cb_cbf_solve_time,     qos)
         self.create_subscription(Float32, topic("metrics/cbf_gamma2_adaptive"),
-                          self._cb_cbf_gamma2, qos)
-        
+                                 self._cb_cbf_gamma2,         qos)
+
+        # Running min SDF topics (published by both systems)
+        self.create_subscription(Float32, topic("metrics/min_phi1_running"),
+                                 self._cb_min_phi1,           qos)
+        self.create_subscription(Float32, topic("metrics/min_phi2_running"),
+                                 self._cb_min_phi2,           qos)
+
+        # Violation count topics (real in both systems)
+        self.create_subscription(Int32, topic("metrics/obstacle_violation_count"),
+                                 self._cb_obs_violation,      qos)
+        self.create_subscription(Int32, topic("metrics/frontier_violation_count"),
+                                 self._cb_fro_violation,      qos)
+
         # Events
         self.create_subscription(Bool,    topic("metrics/stuck_event"),
                                  self._cb_stuck,          qos)
@@ -219,27 +251,26 @@ class ExplorationLogger(Node):
         # APF internal
         self.create_subscription(Int32,   topic("metrics/local_min_count"),
                                  self._cb_local_min,      qos)
-        
-        self.create_subscription(VehicleLocalPosition, 
+
+        self.create_subscription(VehicleLocalPosition,
             "fmu/out/vehicle_local_position", self._cb_pos, qos_px4)
-        self.create_subscription(Path, 
+        self.create_subscription(Path,
             "global_path", self._cb_rrt_path, qos_reliable)
 
-        # periodic flush timer — write buffered rows every 5 s
         self._row_buffer = {k: [] for k in
                             ["coverage", "path", "planning",
-                             "safety", "cbf","events", "apf_internal"]}
-        
+                             "safety", "cbf", "events", "apf_internal"]}
+
         self.create_timer(1.0,  self._write_coverage_row)
         self.create_timer(0.1,  self._write_safety_row)
-        self.create_timer(0.1,  self._write_cbf_row) 
-        self.create_timer(1.0, self._flush_buffers)
+        self.create_timer(0.1,  self._write_cbf_row)
+        self.create_timer(1.0,  self._flush_buffers)
 
         self.get_logger().info("Exploration Logger ONLINE")
         self.get_logger().info(f"  Namespace : '{self.ns}' (empty = single drone)")
         self.get_logger().info(f"  Run dir   : {self.run_dir}")
 
-
+    # ==================== INTERNAL HELPERS ====================
 
     def _open_csv(self, name: str, headers: list):
         path = os.path.join(self.run_dir, f"{name}.csv")
@@ -250,7 +281,6 @@ class ExplorationLogger(Node):
         self._writers[name] = w
 
     def _buf(self, sheet: str, row: dict):
-        """Buffer a row — flushed every 5 s to avoid hammering disk."""
         self._row_buffer[sheet].append(row)
 
     def _flush_buffers(self):
@@ -261,25 +291,24 @@ class ExplorationLogger(Node):
                 self._files[sheet].flush()
                 self._row_buffer[sheet] = []
 
+    def _t(self) -> float:
+        return (self.get_clock().now() - self._start_time).nanoseconds / 1e9
+
+    # ==================== POSE / PATH SUBSCRIBERS ====================
+
     def _cb_pos(self, msg):
         if len(self._actual_trajectory) == 0 or \
-        (round(self._t(), 1) - self._actual_trajectory[-1][0]) >= 0.2:
-            self._actual_trajectory.append((round(self._t(), 3), msg.y, msg.x))    
+                (round(self._t(), 1) - self._actual_trajectory[-1][0]) >= 0.2:
+            self._actual_trajectory.append((round(self._t(), 3), msg.y, msg.x))
+
     def _cb_rrt_path(self, msg):
         pts = [(p.pose.position.x, p.pose.position.y) for p in msg.poses]
         self._rrt_paths.append({"t": round(self._t(), 3), "path": pts})
-    
-    def _t(self) -> float:
-        """Elapsed seconds since node start."""
-        return (self.get_clock().now() - self._start_time).nanoseconds / 1e9
 
-    def _cb_tracking_error(self, msg: Float32):
-        self._last_tracking_error = msg.data
-        self._tracking_error_samples.append(msg.data)
+    # ==================== COVERAGE ====================
 
     def _cb_coverage_pct(self, msg: Float32):
         self._last_coverage_pct = msg.data
-        # self._coverage_samples.append((self._t(), msg.data))  # keep this for summary
 
     def _cb_area(self, msg: Float32):
         self._last_area = msg.data
@@ -290,10 +319,6 @@ class ExplorationLogger(Node):
     def _cb_efficiency(self, msg: Float32):
         self._last_efficiency = msg.data
 
-    def _cb_cbf_gamma2(self, msg: Float32):
-        self._last_gamma2 = msg.data
-        self._gamma2_samples.append(msg.data)
-    
     def _write_coverage_row(self):
         t = self._t()
         self._coverage_samples.append((t, self._last_coverage_pct))
@@ -305,6 +330,7 @@ class ExplorationLogger(Node):
             "path_efficiency_m2pm": round(self._last_efficiency, 6),
         })
 
+    # ==================== PATH ====================
 
     def _cb_path_length(self, msg: Float32):
         self._last_path_length = msg.data
@@ -317,10 +343,11 @@ class ExplorationLogger(Node):
     def _cb_avg_speed(self, msg: Float32):
         self._last_avg_speed = msg.data
 
-    def _cb_cbf_solve_time(self, msg: Float32):
-        self._last_cbf_solve_us = msg.data
-        self._cbf_solve_us_samples.append(msg.data)
+    def _cb_tracking_error(self, msg: Float32):
+        self._last_tracking_error = msg.data
+        self._tracking_error_samples.append(msg.data)
 
+    # ==================== PLANNING ====================
 
     def _cb_rrt_time(self, msg: Float32):
         self._rrt_times.append(msg.data)
@@ -356,6 +383,7 @@ class ExplorationLogger(Node):
             "frontier_count":  msg.data,
         })
 
+    # ==================== SAFETY ====================
 
     def _cb_clearance(self, msg: Float32):
         self._last_clearance = msg.data
@@ -367,7 +395,20 @@ class ExplorationLogger(Node):
         self._last_force_ratio = msg.data
         self._force_ratio_samples.append(msg.data)
 
+    def _cb_min_phi1(self, msg: Float32):
+        """Running minimum obstacle SDF — published by both systems."""
+        self._last_min_phi1 = msg.data
+
+    def _cb_min_phi2(self, msg: Float32):
+        """Running minimum frontier SDF — published by both systems."""
+        self._last_min_phi2 = msg.data
+
     def _write_safety_row(self):
+        """
+        10 Hz safety snapshot.
+        phi1_m / phi2_m are real SDF values in both baseline and CBF runs,
+        enabling direct time-series comparison in Plot 5.
+        """
         self._buf("safety", {
             "t":                        round(self._t(), 3),
             "clearance_m":              round(self._last_clearance, 4),
@@ -375,52 +416,60 @@ class ExplorationLogger(Node):
                                         if self._global_min_clear != float('inf') else "",
             "apf_force_ratio":          round(self._last_force_ratio, 4),
             "tracking_error_m":         round(self._last_tracking_error, 4),
+            "phi1_m":                   round(self._last_phi1, 4),
+            "phi2_m":                   round(self._last_phi2, 4),
+            "min_phi1_running_m":       round(self._last_min_phi1, 4),
+            "min_phi2_running_m":       round(self._last_min_phi2, 4),
         })
+
+    # ==================== CBF / SDF METRICS ====================
 
     def _cb_cbf_h1(self, msg: Float32):
         self._last_h1 = msg.data
         self._cbf_h1_samples.append(msg.data)
- 
+
     def _cb_cbf_h2(self, msg: Float32):
         self._last_h2 = msg.data
         self._cbf_h2_samples.append(msg.data)
- 
+
     def _cb_cbf_phi1(self, msg: Float32):
+        """phi1 = obstacle SDF at drone pose. Real value in both systems."""
         self._last_phi1 = msg.data
         self._cbf_phi1_samples.append(msg.data)
- 
+        self._phi1_samples.append(msg.data)
+
     def _cb_cbf_phi2(self, msg: Float32):
+        """phi2 = frontier SDF at drone pose. Real value in both systems."""
         self._last_phi2 = msg.data
         self._cbf_phi2_samples.append(msg.data)
- 
+        self._phi2_samples.append(msg.data)
+
     def _cb_cbf_slack(self, msg: Float32):
         self._last_cbf_slack = msg.data
         self._cbf_slack_samples.append(msg.data)
- 
+
     def _cb_cbf1_active(self, msg: Bool):
         self._last_cbf1_active = msg.data
         if msg.data:
             self._cbf1_active_count += 1
         self._cbf_total_ticks += 1
- 
+
     def _cb_cbf2_active(self, msg: Bool):
         self._last_cbf2_active = msg.data
         if msg.data:
             self._cbf2_active_count += 1
-        self._cbf_total_ticks += 1
- 
+
     def _cb_cbf_infeasible(self, msg: Int32):
-        # Only log an event when the count increments
         if msg.data > self._cbf_infeasible_count:
             self._buf("events", {
                 "t":          round(self._t(), 3),
                 "event_type": "cbf_infeasible",
             })
         self._cbf_infeasible_count = msg.data
- 
+
     def _cb_cbf_delta(self, msg: Float32):
         self._last_soft_delta = msg.data
- 
+
     def _cb_cbf_speed_clipped(self, msg: Bool):
         self._last_speed_clipped = msg.data
         if msg.data:
@@ -429,22 +478,66 @@ class ExplorationLogger(Node):
                 "t":          round(self._t(), 3),
                 "event_type": "cbf_speed_clipped",
             })
- 
+
+    def _cb_cbf_solve_time(self, msg: Float32):
+        self._last_cbf_solve_us = msg.data
+        self._cbf_solve_us_samples.append(msg.data)
+
+    def _cb_cbf_gamma2(self, msg: Float32):
+        self._last_gamma2 = msg.data
+        self._gamma2_samples.append(msg.data)
+
+    # ==================== VIOLATION COUNTS ====================
+
+    def _cb_obs_violation(self, msg: Int32):
+        """
+        Cumulative obstacle violation counter from the explorer node.
+        Log an event row each time the count increments so events.csv
+        captures the exact timestamp of each violation tick.
+        """
+        new_count = msg.data
+        if new_count > self._prev_obs_violation_count:
+            for _ in range(new_count - self._prev_obs_violation_count):
+                self._buf("events", {
+                    "t":          round(self._t(), 3),
+                    "event_type": "obstacle_violation",
+                })
+        self._last_obs_violation_count = new_count
+        self._prev_obs_violation_count = new_count
+
+    def _cb_fro_violation(self, msg: Int32):
+        """
+        Cumulative frontier violation counter from the explorer node.
+        """
+        new_count = msg.data
+        if new_count > self._prev_fro_violation_count:
+            for _ in range(new_count - self._prev_fro_violation_count):
+                self._buf("events", {
+                    "t":          round(self._t(), 3),
+                    "event_type": "frontier_violation",
+                })
+        self._last_fro_violation_count = new_count
+        self._prev_fro_violation_count = new_count
+
     def _write_cbf_row(self):
-        """10 Hz snapshot of continuous CBF state."""
+        """10 Hz snapshot of CBF / SDF state. Includes violation counters."""
         self._buf("cbf", {
-            "t":            round(self._t(), 3),
-            "h1":           round(self._last_h1,  4),
-            "h2":           round(self._last_h2,  4),
-            "phi1_m":       round(self._last_phi1, 4),
-            "phi2_m":       round(self._last_phi2, 4),
-            "slack":        round(self._last_cbf_slack, 5),
-            "cbf1_active":  int(self._last_cbf1_active),
-            "cbf2_active":  int(self._last_cbf2_active),
-            "speed_clipped":int(self._last_speed_clipped),
-            "soft_delta":   round(self._last_soft_delta, 6),
-            "gamma2":       round(self._last_gamma2, 4),   
+            "t":                    round(self._t(), 3),
+            "h1":                   round(self._last_h1,  4),
+            "h2":                   round(self._last_h2,  4),
+            "phi1_m":               round(self._last_phi1, 4),
+            "phi2_m":               round(self._last_phi2, 4),
+            "slack":                round(self._last_cbf_slack, 5),
+            "cbf1_active":          int(self._last_cbf1_active),
+            "cbf2_active":          int(self._last_cbf2_active),
+            "speed_clipped":        int(self._last_speed_clipped),
+            "soft_delta":           round(self._last_soft_delta, 6),
+            "gamma2":               round(self._last_gamma2, 4),
+            "obs_violation_count":  self._last_obs_violation_count,
+            "fro_violation_count":  self._last_fro_violation_count,
         })
+
+    # ==================== EVENTS ====================
 
     def _cb_stuck(self, msg: Bool):
         if msg.data:
@@ -461,55 +554,43 @@ class ExplorationLogger(Node):
             self._replan_count += 1
             self._buf("events", {"t": round(self._t(), 3), "event_type": "replan"})
 
-
-
     def _cb_local_min(self, msg: Int32):
         self._buf("apf_internal", {
             "t":               round(self._t(), 3),
             "local_min_count": msg.data,
         })
 
-
+    # ==================== SUMMARY ====================
 
     def _write_summary(self):
         total_time = self._t()
 
-        # coverage curve — time to reach 25 / 50 / 75 / 90 % 
         def time_to_pct(target):
             for t, pct in self._coverage_samples:
                 if pct >= target:
                     return round(t, 2)
             return None
 
-        # RRT stats
+        def safe_avg(lst):
+            return round(sum(lst) / len(lst), 4) if lst else None
+
+        def safe_min(lst):
+            return round(min(lst), 4) if lst else None
+
+        def safe_max(lst):
+            return round(max(lst), 4) if lst else None
+
         avg_rrt_ms  = round(sum(self._rrt_times) / len(self._rrt_times), 2) \
                       if self._rrt_times else None
-        med_rrt_ms = round(statistics.median(self._rrt_times), 2) if self._rrt_times else None
+        med_rrt_ms  = round(statistics.median(self._rrt_times), 2) if self._rrt_times else None
         avg_iters   = round(sum(self._rrt_iters) / len(self._rrt_iters), 1) \
                       if self._rrt_iters else None
 
-        # force ratio stats
-        avg_ratio   = round(sum(self._force_ratio_samples) /
-                            len(self._force_ratio_samples), 4) \
-                      if self._force_ratio_samples else None
-        max_ratio   = round(max(self._force_ratio_samples), 4) \
-                      if self._force_ratio_samples else None
-        
-        avg_tracking = round(sum(self._tracking_error_samples) / 
-                     len(self._tracking_error_samples), 4) \
-               if self._tracking_error_samples else None
-        max_tracking = round(max(self._tracking_error_samples), 4) \
-               if self._tracking_error_samples else None
-        
-        def safe_avg(lst):  
-            return round(sum(lst) / len(lst), 4) if lst else None
- 
-        # def safe_med(lst):
-        #     return round(statistics.median(lst), 4) if lst else None
- 
-        def safe_min(lst):
-            return round(min(lst), 4) if lst else None
-        
+        avg_ratio   = safe_avg(self._force_ratio_samples)
+        max_ratio   = safe_max(self._force_ratio_samples)
+        avg_tracking = safe_avg(self._tracking_error_samples)
+        max_tracking = safe_max(self._tracking_error_samples)
+
         cbf_intervention_rate = round(
             (self._cbf1_active_count + self._cbf2_active_count) /
             max(self._cbf_total_ticks * 2, 1), 4
@@ -520,6 +601,7 @@ class ExplorationLogger(Node):
                 "actual": self._actual_trajectory,
                 "rrt_paths": self._rrt_paths
             }, f)
+
         summary = {
             "run_dir":                  self.run_dir,
             "drone_namespace":          self.ns,
@@ -556,7 +638,19 @@ class ExplorationLogger(Node):
             "avg_tracking_error_m":     avg_tracking,
             "max_tracking_error_m":     max_tracking,
 
-            #CBF
+            # ── SDF / clearance comparison (valid for BOTH baseline and CBF runs) ──
+            "min_phi1_obstacle_m":      safe_min(self._phi1_samples),
+            "avg_phi1_obstacle_m":      safe_avg(self._phi1_samples),
+            "min_phi2_frontier_m":      safe_min(self._phi2_samples),
+            "avg_phi2_frontier_m":      safe_avg(self._phi2_samples),
+
+            # ── violation counts (real in both systems after patch) ──
+            # Count of PF ticks where phi1 < d_safe (obstacle standoff breached)
+            "obstacle_violation_ticks": self._last_obs_violation_count,
+            # Count of PF ticks where phi2 < d_stop (frontier standoff breached)
+            "frontier_violation_ticks": self._last_fro_violation_count,
+
+            # ── CBF-specific (zero / null for baseline run) ──
             "cbf_total_ticks_evaluated":   self._cbf_total_ticks,
             "cbf1_obstacle_active_ticks":  self._cbf1_active_count,
             "cbf2_frontier_active_ticks":  self._cbf2_active_count,
@@ -567,19 +661,14 @@ class ExplorationLogger(Node):
             "min_h1":                      safe_min(self._cbf_h1_samples),
             "avg_h2":                      safe_avg(self._cbf_h2_samples),
             "min_h2":                      safe_min(self._cbf_h2_samples),
-            "avg_phi1_m":                  safe_avg(self._cbf_phi1_samples),
-            "min_phi1_m":                  safe_min(self._cbf_phi1_samples),
             "avg_cbf_slack":               safe_avg(self._cbf_slack_samples),
-            "max_cbf_slack":               round(max(self._cbf_slack_samples), 5)
-                                           if self._cbf_slack_samples else None,
-            "avg_cbf_solve_us": safe_avg(self._cbf_solve_us_samples),
-            "max_cbf_solve_us": round(max(self._cbf_solve_us_samples), 2) 
-                    if self._cbf_solve_us_samples else None,
+            "max_cbf_slack":               safe_max(self._cbf_slack_samples),
+            "avg_cbf_solve_us":            safe_avg(self._cbf_solve_us_samples),
+            "max_cbf_solve_us":            safe_max(self._cbf_solve_us_samples),
+            "avg_gamma2":                  safe_avg(self._gamma2_samples),
+            "min_gamma2":                  safe_min(self._gamma2_samples),
+            "max_gamma2":                  safe_max(self._gamma2_samples),
 
-            "avg_gamma2":   safe_avg(self._gamma2_samples),
-            "min_gamma2":   safe_min(self._gamma2_samples),
-            "max_gamma2":   round(max(self._gamma2_samples), 4) if self._gamma2_samples else None,
- 
             # ── events ──
             "total_stuck_events":       self._stuck_count,
             "total_escape_events":      self._escape_count,
@@ -589,36 +678,36 @@ class ExplorationLogger(Node):
         with open(path, "w") as f:
             json.dump(summary, f, indent=2)
 
-        self.get_logger().info("=" * 50)
+        self.get_logger().info("=" * 55)
         self.get_logger().info("LOGGER SUMMARY")
-        self.get_logger().info(f"  Total time       : {round(total_time, 1)} s")
-        self.get_logger().info(f"  Final coverage   : {round(self._last_coverage_pct, 1)} %")
-        self.get_logger().info(f"  Path length      : {round(self._last_path_length, 2)} m")
-        self.get_logger().info(f"  RRT* avg solve   : {avg_rrt_ms} ms")
-        self.get_logger().info(f"  Stuck events     : {self._stuck_count}")
-        min_str = f"{round(self._global_min_clear, 3)} m" if self._global_min_clear != float('inf') else "N/A"
-        self.get_logger().info(f"  Min clearance    : {min_str}")
+        self.get_logger().info(f"  Total time         : {round(total_time, 1)} s")
+        self.get_logger().info(f"  Final coverage     : {round(self._last_coverage_pct, 1)} %")
+        self.get_logger().info(f"  Path length        : {round(self._last_path_length, 2)} m")
+        self.get_logger().info(f"  RRT* avg solve     : {avg_rrt_ms} ms")
+        self.get_logger().info(f"  Stuck events       : {self._stuck_count}")
+        min_str = (f"{round(self._global_min_clear, 3)} m"
+                   if self._global_min_clear != float('inf') else "N/A")
+        self.get_logger().info(f"  Min clearance      : {min_str}")
+        self.get_logger().info(f"  min phi1 (obs SDF) : {safe_min(self._phi1_samples)} m")
+        self.get_logger().info(f"  min phi2 (fro SDF) : {safe_min(self._phi2_samples)} m")
+        self.get_logger().info(f"  Obstacle violations: {self._last_obs_violation_count} ticks")
+        self.get_logger().info(f"  Frontier violations: {self._last_fro_violation_count} ticks")
         self.get_logger().info(f"  CBF ticks          : {self._cbf_total_ticks}")
         self.get_logger().info(f"  CBF c1 active      : {self._cbf1_active_count} ticks")
         self.get_logger().info(f"  CBF c2 active      : {self._cbf2_active_count} ticks")
         self.get_logger().info(f"  CBF intervention   : {cbf_intervention_rate}")
         self.get_logger().info(f"  CBF infeasible     : {self._cbf_infeasible_count}")
         self.get_logger().info(f"  CBF speed clips    : {self._cbf_speed_clip_count}")
-        h1_min = safe_min(self._cbf_h1_samples)
-        self.get_logger().info(f"  min h1 (obstacle)  : {h1_min}")
-        h2_min = safe_min(self._cbf_h2_samples)
-        self.get_logger().info(f"  min h2 (frontier)  : {h2_min}")
-        g2_avg = safe_avg(self._gamma2_samples)
-        self.get_logger().info(f"  γ₂ adaptive avg/min/max: "
-            f"{g2_avg} / {safe_min(self._gamma2_samples)} / "
-            f"{round(max(self._gamma2_samples), 4) if self._gamma2_samples else 'N/A'}")
-        track_str = f"{avg_tracking} m (max: {max_tracking} m)" if avg_tracking else "N/A"
-        self.get_logger().info(f"  Tracking error   : {track_str}")
-        self.get_logger().info(f"  Summary written  : {path}")
-        self.get_logger().info("=" * 50)
+        self.get_logger().info(f"  γ₂ avg/min/max     : "
+            f"{safe_avg(self._gamma2_samples)} / {safe_min(self._gamma2_samples)} / "
+            f"{safe_max(self._gamma2_samples)}")
+        track_str = (f"{avg_tracking} m (max: {max_tracking} m)"
+                     if avg_tracking else "N/A")
+        self.get_logger().info(f"  Tracking error     : {track_str}")
+        self.get_logger().info(f"  Summary written    : {path}")
+        self.get_logger().info("=" * 55)
 
     def destroy_node(self):
-        """Called on Ctrl-C / shutdown — flush and write summary."""
         self._flush_buffers()
         self._write_summary()
         for f in self._files.values():
