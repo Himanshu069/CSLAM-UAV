@@ -6,6 +6,7 @@ BASELINE AUTONOMOUS EXPLORATION SYSTEM (No CBF)
 - Potential Field Local Controller: Smooth reactive motion
 
 """
+import concurrent.futures
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy, DurabilityPolicy
@@ -22,6 +23,7 @@ import random
 from scipy import ndimage
 from dataclasses import dataclass
 from typing import Optional
+import threading
 
 
 # ---------------------------------------------------------------------------
@@ -349,8 +351,20 @@ class AutonomousExplorer(Node):
         self.current_y = msg.x
         self.current_z = msg.z
 
-        self.altitude_ready = True
-
+        if not self.altitude_ready:
+           self.get_logger().info(
+               "Waiting for takeoff... current altitude: %.2f m" % -self.current_z,
+               throttle_duration_sec=2.0
+           )
+           if (-self.current_z) >= self.takeoff_altitude *0.85:
+                self.altitude_ready = True
+                self.last_position = (self.current_x, self.current_y)  
+                self._exploration_start_time = self.get_clock().now() 
+                self.get_logger().info(
+                   f"Takeoff altitude reached: {(-self.current_z):.2f} m"
+           )
+           else:
+               return  
         dx = self.current_x - self.last_position[0]
         dy = self.current_y - self.last_position[1]
         step = math.hypot(dx, dy)
@@ -376,6 +390,8 @@ class AutonomousExplorer(Node):
         self.current_yaw = self.normalize_angle(math.pi / 2.0 - yaw_ned)
 
     def _mission_timeout_cb(self):
+        if self.mission_timed_out:
+            return  
         self.get_logger().warn("Mission timeout (120s), stopping exploration.")
         self.autonomous_mode = False
         self.exploration_complete = True
@@ -668,9 +684,30 @@ class AutonomousExplorer(Node):
         msg_b = Bool(); msg_b.data = True
         self.metrics_replan_pub.publish(msg_b)
 
-        path = self.rrt_star((self.current_x, self.current_y), (self.goal_x, self.goal_y))
+        stop_event = threading.Event()
 
-        if path:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+            future = ex.submit(self.rrt_star,
+                            (self.current_x, self.current_y),
+                            (self.goal_x, self.goal_y),
+                            stop_event)
+            try:
+                path = future.result(timeout=8.0)
+            except concurrent.futures.TimeoutError:
+                stop_event.set()
+                try:
+                    path = future.result(timeout=2.0)
+                except concurrent.futures.TimeoutError:
+                    path = None
+                if path:
+                    self.get_logger().warn("RRT* timed out — using best path found so far")
+                else:
+                    self.get_logger().warn("RRT* timed out with no path — skipping replan")
+                    msg_b = Bool(); msg_b.data = True
+                    self.metrics_rrt_fail_pub.publish(msg_b)
+                    return
+
+        if path and not self.mission_timed_out:
             self.waypoints = path
             self.current_waypoint_idx = 1
             self._last_replan_time = self.get_clock().now()
@@ -678,12 +715,12 @@ class AutonomousExplorer(Node):
             self.stuck_check_position = (self.current_x, self.current_y)
             self.publish_path_viz(path)
             self.get_logger().info(f"Path found: {len(path)} waypoints")
-        else:
-            self.get_logger().warn("RRT* failed - will try again")
+        elif not path:
+            self.get_logger().warn("RRT* failed — will try again")
             msg_b = Bool(); msg_b.data = True
             self.metrics_rrt_fail_pub.publish(msg_b)
 
-    def rrt_star(self, start, goal):
+    def rrt_star(self, start, goal, stop_event=None):
         _t_start = time.monotonic()
 
         start_node = RRTNode(start[0], start[1])
@@ -694,6 +731,10 @@ class AutonomousExplorer(Node):
         improve_iters = min(500, self.rrt_max_iter // 4)
 
         for i in range(self.rrt_max_iter):
+
+            if stop_event is not None and i % 50 == 0 and stop_event.is_set():
+                self.get_logger().info(f"RRT* interrupted at iter {i} — returning best path so far")
+                break
             if random.random() < self.rrt_goal_rate:
                 rand_x, rand_y = goal
             else:

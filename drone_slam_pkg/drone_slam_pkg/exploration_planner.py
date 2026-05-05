@@ -23,6 +23,8 @@ import random
 from scipy import ndimage
 from dataclasses import dataclass
 from typing import Optional
+import concurrent.futures
+import threading
 
 @dataclass
 class CBFConstraint:
@@ -635,20 +637,20 @@ class AutonomousExplorer(Node):
         self.current_y = msg.x
         self.current_z = msg.z
         
-       # if not self.altitude_ready:
-       #     self.get_logger().info(
-       #         "Waiting for takeoff... current altitude: %.2f m" % -self.current_z,
-       #         throttle_duration_sec=2.0
-       #     )
-       #     if (-self.current_z) >= self.takeoff_altitude *0.85:
-        self.altitude_ready = True
-       #         self.last_position = (self.current_x, self.current_y)  
-       #         self._exploration_start_time = self.get_clock().now() 
-       #         self.get_logger().info(
-       #             f"Takeoff altitude reached: {(-self.current_z):.2f} m"
-       #     )
-       #     else:
-       #         return  
+        if not self.altitude_ready:
+           self.get_logger().info(
+               "Waiting for takeoff... current altitude: %.2f m" % -self.current_z,
+               throttle_duration_sec=2.0
+           )
+           if (-self.current_z) >= self.takeoff_altitude *0.85:
+                self.altitude_ready = True
+                self.last_position = (self.current_x, self.current_y)  
+                self._exploration_start_time = self.get_clock().now() 
+                self.get_logger().info(
+                   f"Takeoff altitude reached: {(-self.current_z):.2f} m"
+           )
+           else:
+               return  
             
         dx = self.current_x - self.last_position[0]
         dy = self.current_y - self.last_position[1]
@@ -676,6 +678,8 @@ class AutonomousExplorer(Node):
         self.current_yaw = self.normalize_angle(math.pi / 2.0 - yaw_ned)    
     
     def _mission_timeout_cb(self):
+        if self.mission_timed_out:      # add this guard
+            return
         self.get_logger().warn("Mission timeout (120s), stopping exploration.")
         self.autonomous_mode      = False
         self.exploration_complete = True
@@ -715,8 +719,12 @@ class AutonomousExplorer(Node):
         gx, gy = self.world_to_grid(self.current_x, self.current_y)
         if gx is None or self.map_data is None:
             return  # no pose yet — keep last cached value
-
-        ig = self.information_gain_cone(gx, gy, self.ig_sensor_range)
+        
+        facing_angle = math.atan2(
+        (self.goal_y if self.goal_y is not None else self.current_y) - self.current_y,
+        (self.goal_x if self.goal_x is not None else self.current_x + 1.0) - self.current_x,
+            )
+        ig = self.information_gain_cone(gx, gy, facing_angle,   self.ig_sensor_range)
 
         res     = self.map_info.resolution
         r_cells = int(math.ceil(self.ig_sensor_range / res))
@@ -763,7 +771,7 @@ class AutonomousExplorer(Node):
         self.goal_y = msg.pose.position.y
         self.current_waypoint_idx = 0
         self.autonomous_mode = False 
-        # self.motion_state = "FORWARD"
+        self._last_replan_time = None
         self.get_logger().info(f"Manual Goal Set: ({self.goal_x:.1f}, {self.goal_y:.1f})")
         self.get_logger().info(" Autonomous exploration PAUSED")
         self.rrt_replan()
@@ -910,6 +918,7 @@ class AutonomousExplorer(Node):
 
         if best_frontier:
             self.goal_x, self.goal_y = best_frontier
+            self._last_replan_time = None 
             self.autonomous_mode = True
             self.current_waypoint_idx = 0
             # self.motion_state = "FORWARD" 
@@ -1064,18 +1073,16 @@ class AutonomousExplorer(Node):
     # ==================== RRT* GLOBAL PLANNER ====================
     
     def rrt_replan(self):
-        """Run RRT* to generate global waypoint path"""
         if self.inflated_map is None or self.goal_x is None:
             return
-        
         if not self.altitude_ready:
             return
-        
+
         if self._last_replan_time is not None:
             elapsed = (self.get_clock().now() - self._last_replan_time).nanoseconds / 1e9
-            if elapsed < 3.0:  # minimum replan interval
+            if elapsed < 3.0:
                 return
-        
+
         dist = math.hypot(self.goal_x - self.current_x, self.goal_y - self.current_y)
         if dist < 0.5:
             self.get_logger().info("Goal Reached!")
@@ -1083,36 +1090,46 @@ class AutonomousExplorer(Node):
             self.waypoints = []
             self.publish_zero_velocity()
             return
-        
-        self.get_logger().info("Running RRT*...")
 
+        self.get_logger().info("Running RRT*...")
         msg_b = Bool(); msg_b.data = True
         self.metrics_replan_pub.publish(msg_b)
-        
-        start = (self.current_x, self.current_y)
-        goal = (self.goal_x, self.goal_y)
-        
-        # Run RRT*
-        path = self.rrt_star(start, goal)
-        
-        if path:
-            # safe_path = self._truncate_at_unknown(path)
-            # self.waypoints = safe_path
+
+        stop_event = threading.Event()
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+            future = ex.submit(self.rrt_star,
+                            (self.current_x, self.current_y),
+                            (self.goal_x, self.goal_y),
+                            stop_event)
+            try:
+                path = future.result(timeout=8.0)
+            except concurrent.futures.TimeoutError:
+                stop_event.set()
+                try:
+                    path = future.result(timeout=2.0)
+                except concurrent.futures.TimeoutError:
+                    path = None
+                if path:
+                    self.get_logger().warn("RRT* timed out — using best path found so far")
+                else:
+                    self.get_logger().warn("RRT* timed out with no path — skipping replan")
+                    msg_b = Bool(); msg_b.data = True
+                    self.metrics_rrt_fail_pub.publish(msg_b)
+                    return
+
+        if path and not self.mission_timed_out:
             self.waypoints = path
             self.current_waypoint_idx = 1
             self._last_replan_time = self.get_clock().now()
             self.last_stuck_check_time = None
             self.stuck_check_position = (self.current_x, self.current_y)
-            self.publish_path_viz(path)  
-            self.get_logger().info(
-                f"Path found: {len(path)} waypoints, "
-                # f"safe portion: {len(safe_path)} waypoints"
-            )
-        else:
-            self.get_logger().warn(" RRT* failed - will try again")
+            self.publish_path_viz(path)
+            self.get_logger().info(f"Path found: {len(path)} waypoints")
+        elif not path:
+            self.get_logger().warn("RRT* failed — will try again")
             msg_b = Bool(); msg_b.data = True
             self.metrics_rrt_fail_pub.publish(msg_b)
-    
     # def _truncate_at_unknown(self, path, sample_res=0.1):
     #     if self.map_data is None:
     #         return path
@@ -1148,7 +1165,7 @@ class AutonomousExplorer(Node):
     #             return True
     #     return False
 
-    def rrt_star(self, start, goal):
+    def rrt_star(self, start, goal, stop_event=None):
         """RRT* algorithm - returns list of (x,y) waypoints"""
         _t_start = time.monotonic()
 
@@ -1161,6 +1178,9 @@ class AutonomousExplorer(Node):
         
         for i in range(self.rrt_max_iter):
             # Sample random point
+            if stop_event is not None and i % 50 == 0 and stop_event.is_set():  # add this block
+                self.get_logger().info(f"RRT* interrupted at iter {i} — returning best path so far")
+                break
             if random.random() < self.rrt_goal_rate:
                 rand_x, rand_y = goal
             else:
@@ -2204,3 +2224,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
