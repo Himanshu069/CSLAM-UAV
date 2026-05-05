@@ -368,7 +368,7 @@ class AutonomousExplorer(Node):
             ("k_rep", 0.5),
             ("influence_radius", 0.75),
             ("pf_update_rate", 10.0),        # Hz
-            ("max_speed", 0.1),
+            ("max_speed", 0.2),
             ("waypoint_threshold", 0.3),
 
             ("stuck_time_threshold", 2.0),   # seconds - time to detect astuck
@@ -1080,7 +1080,7 @@ class AutonomousExplorer(Node):
 
         if self._last_replan_time is not None:
             elapsed = (self.get_clock().now() - self._last_replan_time).nanoseconds / 1e9
-            if elapsed < 3.0:
+            if elapsed < 1.0:
                 return
 
         dist = math.hypot(self.goal_x - self.current_x, self.goal_y - self.current_y)
@@ -1446,7 +1446,7 @@ class AutonomousExplorer(Node):
             
         force_mag = math.hypot(fx, fy)
 
-        if force_mag < 0.15 and dist > self.wp_threshold:
+        if force_mag < 0.05 and dist > self.wp_threshold:
             self.local_min_count += 1
         else:
             self.local_min_count = max(0, self.local_min_count - 1)
@@ -1477,7 +1477,8 @@ class AutonomousExplorer(Node):
             self.publish_zero_velocity()
             return
         
-        desired_speed = self.max_speed * math.tanh(force_mag / self.k_att)
+        desired_speed = self.max_speed 
+        # * math.tanh(force_mag / self.k_att)
 
         # yaw = self.current_yaw
 
