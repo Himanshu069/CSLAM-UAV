@@ -1,62 +1,228 @@
-<h2>Collaborative SLAM with Multi-UAV System (ROS 2 + PX4)</h2>
-This repository contains a full workflow for setting up, simulating, and experimenting with multi‑UAV collaborative SLAM (CSLAM) using ROS 2, PX4, Gazebo, and RTAB‑Map. It is designed to support both autonomous and manual teleoperation modes, with each drone running onboard SLAM.
+<h1>Collaborative SLAM & Autonomous Multi-UAV Exploration System (ROS 2 + PX4 + RTAB-Map)</h1>
 
-<img width="496" height="512" alt="image" src="https://github.com/user-attachments/assets/4febfa29-4065-4ca6-926e-83b466667bc9" />
+This repository implements a full **multi-agent Collaborative SLAM (CSLAM) and autonomous exploration framework** for UAVs using **ROS 2, PX4, Gazebo, and RTAB-Map**. The system is designed for both **simulation and real-world deployment**, maintaining identical architecture across both environments.
 
----
-1️⃣ Prerequisites
-System Requirements
-
-Ubuntu 24.04 LTS
-
-ROS 2 Jazzy
-
-PX4 v1.16
-
-Gazebo Harmonic 
-
-Install ROS2 Jazzy and standard dependencies.
+It supports:
+- Multi-UAV visual-inertial SLAM
+- Centralized map fusion (2D occupancy grids + 3D point clouds)
+- Autonomous frontier-based exploration
+- RRT* global planning + APF local control
+- Real-time safety filtering using Control Barrier Functions (CBF)
+- Decentralized multi-drone coordination without explicit task allocation
 
 ---
-2️⃣ PX4 Setup (Firmware + Gazebo Models)
 
-```bash
-git clone https://github.com/PX4/PX4-Autopilot.git
-cd PX4-Autopilot
-git checkout release/1.16
-```
+## System Overview
+<img width="616" height="471" alt="image" src="https://github.com/user-attachments/assets/3b06858a-7ee0-4479-a2a5-8e7ef223f889" />
+
+Each UAV runs an independent SLAM and exploration stack inside its own ROS 2 namespace:
+
+- `/x500_drone_0`
+- `/x500_drone_1`
+
+Each agent performs:
+- Visual-Inertial Odometry (RGB-D + IMU fusion)
+- RTAB-Map based local SLAM
+- Independent map generation (Occupancy Grid + OctoMap)
+
+A centralized ground-station node performs:
+- 2D occupancy grid merging (real-time, 4 Hz)
+- 3D point cloud fusion (simulation only)
+- Multi-agent map alignment using:
+  - Known initial poses (rigid transform)
+  - OR feature-based estimation (AKAZE-based registration)
+
 ---
-3️⃣ Workspace Setup
 
+## Core Architecture
+
+### 1. SLAM Pipeline (Per UAV)
+- RGB-D + IMU time synchronization
+- Visual-Inertial Odometry fusion
+- RTAB-Map graph optimization with loop closure
+- Independent local map database per agent
+- Odometry feedback integrated into PX4 EKF (GPS-denied navigation)
+
+---
+
+### 2. Map Merging System (Central Node)
+
+#### 2D Occupancy Grid Fusion
+- Dynamic ROS 2 topic discovery
+- Namespace-based multi-robot map subscription
+- Dual-mode alignment:
+  - Known pose alignment (fixed transforms)
+
+---
+
+### 3. Autonomous Exploration Stack
+<img width="313" height="546" alt="Screenshot from 2026-05-06 19-54-59" src="https://github.com/user-attachments/assets/ff9b3390-ec31-40be-a2e9-36e407474d2d" />
+<img width="243" height="310" alt="Screenshot from 2026-05-06 20-10-46" src="https://github.com/user-attachments/assets/2ce14ea6-abe6-43fa-b3dc-acbb5f8a798e" />
+
+
+https://github.com/user-attachments/assets/bf80fb55-6486-4027-b883-12a1031e768e
+
+
+Each UAV independently runs:
+
+#### Frontier-Based Exploration
+- Frontier detection via unknown-cell adjacency
+- Cluster filtering using morphological operations
+- Scoring function combining:
+  - Information gain (cluster size)
+  - Distance penalty
+  - Approach feasibility score
+
+#### Global Planning (RRT*)
+- Collision-aware planning on inflated costmap
+- Rewiring-based optimality improvement
+- Anytime replanning with stuck detection recovery
+
+#### Local Control (APF)
+- Attractive force (goal following)
+- Repulsive force (obstacles via EDT)
+- Inter-drone repulsive force (decentralized avoidance)
+- Smooth velocity generation using tanh scaling
+
+#### Safety Layer (CBF QP Filter)
+- Dual control barrier functions:
+  - Obstacle avoidance constraint
+  - Frontier safety constraint
+- Closed-form KKT-based QP solver (no external optimizer)
+- Always-feasible soft fallback with slack variable
+
+---
+
+### 4. Multi-UAV Coordination (Decentralized)
+
+No centralized task assignment is used.
+
+Instead:
+- Workspace partitioning via perpendicular bisector
+- Adaptive boundary rotation to avoid deadlock
+- Reactive inter-drone repulsion in APF layer
+- Fully decentralized execution using only pose sharing
+
+---
+
+## Simulation Environment
+
+- PX4 SITL + Gazebo (x500 depth quadrotor)
+- Micro-XRCE-DDS bridge (PX4 ↔ ROS 2)
+- Two UAV instances in shared environment
+- Namespace-isolated sensor streams
+- Identical architecture to hardware deployment
+
+---
+
+## Hardware Deployment
+
+
+
+
+https://github.com/user-attachments/assets/60eb4398-de8c-4890-864f-8d0ada58b992
+
+
+
+### Flight Stack
+- PX4 (CUAV Nano 7, Pixhawk 4 flight controllers)
+- EKF tuned for vision-based navigation (GPS/mag/barometer disabled)
+
+### Companion Computers
+- Raspberry Pi 4 (Drone 0)
+- Raspberry Pi 5 (Drone 1)
+
+### Sensors
+- Intel RealSense D435i
+- Luxonis OAK-D Pro W
+- TFMINI PRO
+- VL53l1x, Vl53l0x
+
+### Communication
+- ROS 2 DDS over shared LAN
+- Micro-XRCE-DDS Agent/Client bridge
+- Fully synchronized namespace-based topic routing
+
+---
+
+## Key Features
+
+-  Multi-UAV RTAB-Map SLAM
+-  Centralized real-time map fusion
+- GPS-denied navigation
+-  Frontier-based autonomous exploration
+-  RRT* + APF hybrid planning
+-  Dual-CBF safety filter (closed-form QP solver)
+-  Decentralized multi-robot coordination
+-  Simulation-to-hardware consistency
+
+---
+
+## Exploration Metrics Logging
+
+Each run logs:
+
+### Coverage Metrics
+- Coverage %
+- Explored area
+- Coverage rate
+
+### Planning Metrics
+- RRT* solve time
+- Iteration count
+- Frontier count
+
+### Safety Metrics
+- Minimum obstacle clearance
+- CBF activation rate
+- QP infeasible events
+- APF force ratio
+
+### Multi-UAV Metrics
+- Inter-drone distance
+- Repulsion forces
+- Safety violations
+
+Outputs:
+- CSV logs (time-series)
+- JSON summary statistics
+- Post-processing plots
+
+---
+
+## Launch Instructions
+
+### 1. Build Workspace
 ```bash
 mkdir -p ~/cslam_ws/src
 cd ~/cslam_ws/src
 git clone https://github.com/Himanshu069/CSLAM-UAV.git .
 git submodule update --init --recursive
+
 cd ~/cslam_ws
-colcon build --packages_select px4_msgs px4_ros2_cpp
+colcon build --packages-select px4_msgs px4_ros2_cpp
 source install/setup.bash
 colcon build
 ```
----
-4️⃣ SLAM Simulation
+### 2. Run RTAB-MAP SLAM Simulation
 ```bash
 ros2 launch drone_slam_pkg px4_gazebo.launch.py
 ```
----
-5️⃣ Manual Teleoperation Mode <br>
-In one terminal , run: <br>
+This launches the RTABMAP SLAM simulation which takes in the imu data from PX4,and rgb and depth image from the camera and the odometry data is published to PX4 which handles low level control and it also builds a 3d pointcloud map which is projected to 2d needed for autonomous exploration planning .
+
+For hardware, checkout to rasppi branch and run an equivalent launch file for RTAB-MAP SLAM and odometry , though you will need to configure camera specific drivers and setup the companion computer accordingly.
+### 3. Run Exploration-Planner
+In one terminal run
 ```bash
-ros2 run manual_ros2_px4_multi teleop
+ros2 launch drone_slam_pkg offboard_control.launch.py
 ```
-And in another terminal, run: <br>
+After the drone settles at a height. In another terminal, run
+
 ```bash
-ros2 run manual_ros2_px4_multi teleop_keyboard
+ros2 launch drone_slam_pkg exploration_planner.launch.py
 ```
----
-6️⃣ Project Goals: <br>
-Individual RTAB-Map SLAM implementation on TWO DRONES<br>
-Individual Exploration Planner in both drones using RRT* and Potential Field Functions
-Online Map fusion from two drones(ON a Centralized Computer in hardware)<br>
+The launch file handles the entire exploration planner stack and logges the required data.
+
+
 
 
