@@ -4,7 +4,7 @@ This repository implements a full **multi-agent Collaborative SLAM (CSLAM) and a
 
 It supports:
 - Multi-UAV visual-inertial SLAM
-- Centralized map fusion (2D occupancy grids + 3D point clouds)
+- Centralized map fusion (2D occupancy grids)
 - Autonomous frontier-based exploration
 - RRT* global planning + APF local control
 - Real-time safety filtering using Control Barrier Functions (CBF)
