@@ -200,7 +200,7 @@ git clone https://github.com/Himanshu069/CSLAM-UAV.git .
 git submodule update --init --recursive
 
 cd ~/cslam_ws
-colcon build --packages-select px4_msgs px4_ros2_cpp
+colcon build 
 source install/setup.bash
 colcon build
 ```
