@@ -1,6 +1,6 @@
-<h1>Collaborative SLAM & Autonomous Multi-UAV Exploration System (ROS 2 + PX4 + RTAB-Map)</h1>
+<h1>Autonomous Multi-UAV Exploration System (ROS 2 + PX4(uXRCE-DDS)  + RTAB-Map)</h1>
 
-This repository implements a full **multi-agent Collaborative SLAM (CSLAM) and autonomous exploration framework** for UAVs using **ROS 2, PX4, Gazebo, and RTAB-Map**. The system is designed for both **simulation and real-world deployment**, maintaining identical architecture across both environments.
+This repository implements a full **multi-agent autonomous exploration framework** for UAVs using **ROS 2, PX4, Gazebo, and RTAB-Map**. The system is designed for both **simulation and real-world deployment**, maintaining identical architecture across both environments.
 
 It supports:
 - Multi-UAV visual-inertial SLAM
