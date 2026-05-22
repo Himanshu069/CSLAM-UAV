@@ -20,7 +20,7 @@ def generate_launch_description():
             output='screen',
             parameters = [
                 {
-                    "drone_radius": 0.26,
+                    "drone_radius": 0.25,
                     "other_drone_pose_topic": '/x500_drone_1/localization_pose',
                     "other_drone_safety_radius": 3,
                     "other_drone_init_x": 2.0 ,
@@ -59,7 +59,7 @@ def generate_launch_description():
             output='screen',
             parameters = [
                 {
-                    "drone_radius": 0.26,
+                    "drone_radius": 0.25,
                     "other_drone_pose_topic": '/x500_drone_0/localization_pose',
                     "other_drone_safety_radius": 3,
                     "other_drone_init_x": -2.0 ,
