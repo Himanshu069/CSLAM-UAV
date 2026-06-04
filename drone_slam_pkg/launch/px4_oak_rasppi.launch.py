@@ -51,7 +51,8 @@ def generate_launch_description():
             'Grid/NoiseFilteringRadius': '0.15',
             'Grid/NoiseFilteringMinNeighbors': '7',
             
-            'database_path': f'~/.ros/{db_name}.db'
+            'database_path': ''
+            #'database_path': f'~/.ros/{db_name}.db'
         }
 
     
@@ -63,7 +64,7 @@ def generate_launch_description():
             package='image_proc',
             executable='rectify_node',
             name='rectify_color_image',
-            prefix='taskset -c 2',
+            prefix='taskset -c 3',
             output='screen',
             parameters=[{'use_sim_time': False}],
             remappings=[

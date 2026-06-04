@@ -13,7 +13,7 @@ def generate_launch_description():
         
         Node(
             package='px4_ros_com',
-            executable='offboard_z',
+            executable='offboard_cmd_vel',
             name='drone_0_control',
             namespace='x500_drone_0',
             output='screen',
