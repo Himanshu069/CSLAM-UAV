@@ -66,7 +66,7 @@ def generate_launch_description():
                  ExecuteProcess(
                      cmd=[
                          "gnome-terminal", "--", "bash", "-c",
-                          'cd ' + px4_dir + ' && PX4_SYS_AUTOSTART=4001 PX4_GZ_MODEL_POSE="0,1,0" PX4_GZ_MODEL_ORIENTATION="0,0,1.5708" PX4_SIM_MODEL=gz_x500_depth ./build/px4_sitl_default/bin/px4 -i 1; exec bash'],
+                          'cd ' + px4_dir + ' && PX4_SYS_AUTOSTART=4002 PX4_GZ_MODEL_POSE="0,1,0" PX4_GZ_MODEL_ORIENTATION="0,0,1.5708" PX4_SIM_MODEL=gz_x500_depth MAV_SYS_ID=1 ./build/px4_sitl_default/bin/px4 -i 1; exec bash'],
                     output="screen",
                 )
             ],
