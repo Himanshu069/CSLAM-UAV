@@ -17,8 +17,8 @@ def generate_launch_description():
             'odom_frame_id': f'{drone_ns}/odom',
             
 
-            'subscribe_rgbd': True,
-            'subscribe_depth': False,
+            'subscribe_rgbd': False,
+            'subscribe_depth': True,
             'subscribe_odom': True,
             'subscribe_imu': True,
             'approx_sync': True,
@@ -55,6 +55,23 @@ def generate_launch_description():
     
     return LaunchDescription([
         ExecuteProcess(
+                cmd=["gnome-terminal", "--", "make", "-C", px4_dir, "px4_sitl", "gz_x500_depth"],
+                output="screen",
+                shell=True
+        ),
+
+        TimerAction(
+             period=5.0,
+             actions=[
+                 ExecuteProcess(
+                     cmd=[
+                         "gnome-terminal", "--", "bash", "-c",
+                          'cd ' + px4_dir + ' && PX4_SYS_AUTOSTART=4001 PX4_GZ_MODEL_POSE="0,1,0" PX4_GZ_MODEL_ORIENTATION="0,0,1.5708" PX4_SIM_MODEL=gz_x500_depth ./build/px4_sitl_default/bin/px4 -i 1; exec bash'],
+                    output="screen",
+                )
+            ],
+        ),
+        ExecuteProcess(
             cmd=["gnome-terminal", "--", "./QGroundControl-x86_64.AppImage"],
             cwd=os.path.expanduser("~"),
             output="screen",
@@ -66,47 +83,11 @@ def generate_launch_description():
             output="screen",
         ),
 
-        TimerAction(
-            period = 1.0,
-            actions = [
-                ExecuteProcess(
-                    cmd=["gnome-terminal", "--", "make", "-C", px4_dir, "px4_sitl", "gz_x500_depth"],
-                    output="screen",
-                    shell=True
-                )
-            ],
-        ),
-
-         TimerAction(
-             period=15.0,
-             actions=[
-                 ExecuteProcess(
-                     cmd=[
-                         "gnome-terminal", "--", "bash", "-c",
-                         "cd " + px4_dir +
-                         " && mkdir -p build/px4_sitl_default/instance_1 "
-                         "&& PX4_SYS_AUTOSTART=4001 "
-                         'PX4_GZ_MODEL_POSE="2,0,0" '
-                         "PX4_SIM_MODEL=gz_x500_depth "
-                         "./build/px4_sitl_default/bin/px4 -i 1"
-                    ],
-                    output="screen",
-                )
-            ],
-        ),
-
-
-                Node(
+        Node(
                     package="ros_gz_bridge",
                     executable="parameter_bridge",
                     name="gz_bridge_rgbd_imu_2drones",
                     output="screen",
-                    parameters=[{
-                            "use_sim_time": True,
-                            "subscription_heartbeat_period": 100,
-                            "subscriber_queue_depth": 50,  
-                            "publisher_queue_depth": 50, 
-                                 }],
                     arguments=[
                         "/clock@rosgraph_msgs/msg/Clock[gz.msgs.Clock",
                         
@@ -135,8 +116,11 @@ def generate_launch_description():
                         ("/world/default/model/x500_depth_1/link/camera_link/sensor/StereoOV7251/depth_image", "/x500_drone_1/depth/image"),
                         ("/world/default/model/x500_depth_1/link/base_link/sensor/imu_sensor/imu", "/x500_drone_1/imu/data_raw"),
                     ],
-                ),
+        ),
 
+        TimerAction(
+            period=40.0,
+            actions=[
                 #Drone 0
                 Node(package='tf2_ros', executable='static_transform_publisher',
                      arguments=['0', '0', '0', '0', '0', '0', 'x500_drone_0/base_link', 'x500_depth_0/base_link/imu_sensor']),
@@ -205,7 +189,7 @@ def generate_launch_description():
                     parameters=[{
                         "use_sim_time": True,
                         "approx_sync": True,
-                        "approx_sync_max_interval": 0.04,
+                        "approx_sync_max_interval": 0.05,
                         "queue_size": 200,
                         "sync_queue_size": 100,
                     }],
@@ -282,7 +266,8 @@ def generate_launch_description():
                         {"odom_topic": "/x500_drone_0/odom"},
                         {"vehicle_odometry_topic": "/fmu/in/vehicle_visual_odometry"},
                         {"map_frame_id": "x500_drone_0/map"},   
-                        {"repeat_odom": True}      
+                        {"repeat_odom": False},
+                        {"use_sim_time": True}
                     ],
                     output='screen'
                 ),
@@ -329,7 +314,7 @@ def generate_launch_description():
                     parameters=[{
                         "use_sim_time": True,
                         "approx_sync": True,
-                        "approx_sync_max_interval": 0.04,
+                        "approx_sync_max_interval": 0.05,
                         "queue_size": 200,
                         "sync_queue_size": 100,
                     }],
@@ -356,7 +341,7 @@ def generate_launch_description():
                 Node(
                     package="rtabmap_slam",
                     executable="rtabmap",
-                    name="rtabmap",
+                    name="rtabmap_1",
                     namespace="x500_drone_1",
                     output="screen",
                     parameters=[get_vslam_params("x500_drone_1", "rtabmap_drone_1")],
@@ -407,10 +392,12 @@ def generate_launch_description():
                         {"odom_topic": "/x500_drone_1/odom"},
                         {"vehicle_odometry_topic": "px4_1/fmu/in/vehicle_visual_odometry"},
                         {"map_frame_id": "x500_drone_1/map"},   
-                        {"repeat_odom": True}      
+                        {"repeat_odom": False},
+                        {"use_sim_time": True}
                     ],
                     output='screen'
                 )
-
-            ],
+             ],
+             )
+         ],
     )
