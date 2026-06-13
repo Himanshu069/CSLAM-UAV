@@ -31,7 +31,6 @@ def generate_launch_description():
             remappings = [
                 ("map","/x500_drone_0/map"),
                 ("fmu/out/vehicle_local_position","/fmu/out/vehicle_local_position"),
-                ("fmu/in/distance_sensor","/fmu/in/distance_sensor"),
                 ("fmu/out/vehicle_attitude","/fmu/out/vehicle_attitude")
             ]
         ),
