@@ -34,7 +34,13 @@ def generate_launch_description():
                {"use_sim_time": True}
            ],
            remappings=[
-               ("/cmd_vel","/x500_drone_1/cmd_vel"), 
+                ("/cmd_vel","/x500_drone_1/cmd_vel"), 
+                ("/fmu/in/offboard_control_mode", "/px4_1/fmu/in/offboard_control_mode"),
+                ("/fmu/in/trajectory_setpoint", "/px4_1/fmu/in/trajectory_setpoint"),
+                ("/fmu/in/vehicle_command", "/px4_1/fmu/in/vehicle_command"),
+                ("/fmu/out/vehicle_local_position", "/px4_1/fmu/out/vehicle_local_position"),
+                ("/fmu/out/vehicle_status_v1", "/px4_1/fmu/out/vehicle_status_v1"),
+                ("/fmu/out/vehicle_command_ack", "/px4_1/fmu/out/vehicle_command_ack"),
            ]
         ),
         # # Node(
