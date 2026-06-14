@@ -36,7 +36,7 @@ setup(
                         'velocity_control1 = drone_slam_pkg.velocity_control1:main',
                         'logger_exploration_planner = drone_slam_pkg.logger_exploration_planner:main',
                         'multi_exploration_planner = drone_slam_pkg.exploration_planner:main',
-
+                        'multi_logger_exploration_planner = drone_slam_pkg.multi_logger_exploration_planner:main',
             ],
         },
     )
