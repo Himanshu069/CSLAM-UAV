@@ -22,7 +22,14 @@ def generate_launch_description():
                 {"target_sytem":1}
             ],
             remappings=[
-                ("/cmd_vel","/x500_drone_0/cmd_vel"), 
+                ("/cmd_vel","/x500_drone_0/cmd_vel"),
+                ("/fmu/in/offboard_control_mode", "/fmu/in/offboard_control_mode"),
+                ("/fmu/in/trajectory_setpoint", "/fmu/in/trajectory_setpoint"),
+                ("/fmu/in/vehicle_command", "/fmu/in/vehicle_command"),
+                ("/fmu/out/vehicle_local_position", "/fmu/out/vehicle_local_position"),
+                ("/fmu/out/vehicle_status_v1", "/fmu/out/vehicle_status_v1"),
+                ("/fmu/out/vehicle_command_ack", "/fmu/out/vehicle_command_ack"),
+
             ]
         ),
         Node(

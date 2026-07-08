@@ -9,7 +9,6 @@ import os
 def generate_launch_description():
     # bash_script_path = os.path.join(package_dir, 'scripts', 'TerminatorScript.sh')
     package_dir = get_package_share_directory('drone_slam_pkg')
-    nav2_params_path = os.path.join(package_dir,'config','nav2_mppi.yaml')
     return LaunchDescription([
 
         Node(
@@ -22,8 +21,8 @@ def generate_launch_description():
                 {
                     "drone_radius": 0.25,
                     "other_drone_pose_topic": '/x500_drone_1/localization_pose',
-                    "other_drone_safety_radius": 3,
-                    "other_drone_init_x": 2.0 ,
+                    "other_drone_safety_radius": 1,
+                    "other_drone_init_x": 3.0 ,
                     "other_drone_init_y": 0.0,
                     'map_frame': '/x500_drone_0/map'
                 }
@@ -60,16 +59,16 @@ def generate_launch_description():
                 {
                     "drone_radius": 0.25,
                     "other_drone_pose_topic": '/x500_drone_0/localization_pose',
-                    "other_drone_safety_radius": 3,
-                    "other_drone_init_x": -2.0 ,
+                    "other_drone_safety_radius": 1,
+                    "other_drone_init_x": -3.0 ,
                     "other_drone_init_y": 0.0,
                     'map_frame': '/x500_drone_1/map'
                 }
             ],
             remappings = [
                 ("map","/x500_drone_1/map"),
-                ("fmu/out/vehicle_local_position","px4_1/fmu/out/vehicle_local_position"),
-                ("fmu/out/vehicle_attitude","px4_1/fmu/out/vehicle_attitude")
+                ("fmu/out/vehicle_local_position","/px4_1/fmu/out/vehicle_local_position"),
+                ("fmu/out/vehicle_attitude","/px4_1/fmu/out/vehicle_attitude")
             ]
         ),
         Node(
@@ -85,7 +84,7 @@ def generate_launch_description():
                 }
             ],
             remappings=[
-                ("fmu/out/vehicle_local_position", "px4_1/fmu/out/vehicle_local_position"),
+                ("fmu/out/vehicle_local_position", "/px4_1/fmu/out/vehicle_local_position"),
             ]   
         ),
         # # Node(

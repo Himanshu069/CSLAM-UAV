@@ -469,7 +469,7 @@ class AutonomousExplorer(Node):
             min_cluster_cells = self.get_parameter("cbf_min_cluster_cells").value,
         )
         self._cbf_infeasible_count = 0
-         
+        self._rrt_consecutive_failures = 0 
         self.inflated_map = None
         self.map_data = None
         self.map_info = None
@@ -1090,23 +1090,43 @@ class AutonomousExplorer(Node):
         """Run RRT* to generate global waypoint path"""
         if self.inflated_map is None or self.goal_x is None:
             return
-        
+    
         if not self.altitude_ready:
             return
-        
+    
         if self._last_replan_time is not None:
             elapsed = (self.get_clock().now() - self._last_replan_time).nanoseconds / 1e9
-            if elapsed < 3.0:  # minimum replan interval
+            if elapsed < 3.0:
                 return
-        
+    
         dist = math.hypot(self.goal_x - self.current_x, self.goal_y - self.current_y)
         if dist < 0.5:
             self.get_logger().info("Goal Reached!")
             self.goal_x = None
             self.waypoints = []
+            self._rrt_consecutive_failures = 0
             self.publish_zero_velocity()
             return
-        
+
+        # Validate goal cell is reachable
+        gx_goal, gy_goal = self.world_to_grid(self.goal_x, self.goal_y)
+        if gx_goal is None or self.inflated_map[gy_goal, gx_goal] >= 50:
+            val = self.inflated_map[gy_goal, gx_goal] if gx_goal is not None else -999
+            self.get_logger().warn(
+                f"Goal ({self.goal_x:.2f},{self.goal_y:.2f}) in non-free cell "
+                f"(val={val}) — abandoning"
+            )
+            self.goal_x = None
+            self.waypoints = []
+            self._rrt_consecutive_failures = 0
+            return
+
+        # Validate start cell
+        gx_start, gy_start = self.world_to_grid(self.current_x, self.current_y)
+        if gx_start is None or self.inflated_map[gy_start, gx_start] >= 50:
+            self.get_logger().warn("Current position in non-free cell — waiting for map update")
+            return
+
         self.get_logger().info("Running RRT*...")
 
         msg_b = Bool(); msg_b.data = True
@@ -1115,62 +1135,36 @@ class AutonomousExplorer(Node):
         start = (self.current_x, self.current_y)
         goal = (self.goal_x, self.goal_y)
         
-        # Run RRT*
         path = self.rrt_star(start, goal)
         
         if path:
-            # safe_path = self._truncate_at_unknown(path)
-            # self.waypoints = safe_path
             self.waypoints = path
             self.current_waypoint_idx = 1
             self._last_replan_time = self.get_clock().now()
+            self._rrt_consecutive_failures = 0
             self.last_stuck_check_time = None
             self.stuck_check_position = (self.current_x, self.current_y)
-            self.publish_path_viz(path)  
-            self.get_logger().info(
-                f"Path found: {len(path)} waypoints, "
-                # f"safe portion: {len(safe_path)} waypoints"
-            )
+            self.publish_path_viz(path)
+            self.get_logger().info(f"Path found: {len(path)} waypoints")
         else:
-            self.get_logger().warn(" RRT* failed - will try again")
+            self._rrt_consecutive_failures += 1
+            self.get_logger().warn(
+                f"RRT* failed — will try again "
+                f"({self._rrt_consecutive_failures}/5)"
+            )
             msg_b = Bool(); msg_b.data = True
             self.metrics_rrt_fail_pub.publish(msg_b)
-    
-    # def _truncate_at_unknown(self, path, sample_res=0.1):
-    #     if self.map_data is None:
-    #         return path
-    #     safe = [path[0]]
-    #     for i in range(1, len(path)):
-    #         x1, y1 = path[i - 1]
-    #         x2, y2 = path[i]
-    #         if self._segment_has_unknown(x1, y1, x2, y2, sample_res):
-    #             self.get_logger().info(
-    #                 f"Path truncated at segment {i}/{len(path)} "
-    #                 f"— holding until map fills in"
-    #             )
-    #             break  # don't append — hold before unknown space
-    #         safe.append((x2, y2))
-    #     if len(safe) <= 1:
-    #         self.get_logger().warn(
-    #             "No safe waypoints available — holding position"
-    #         )
-    #         return []
-    #     return safe
-    
-    # def _segment_has_unknown(self, x1, y1, x2, y2, sample_res=0.1):
-    #     dist  = math.hypot(x2 - x1, y2 - y1)
-    #     steps = max(int(dist / sample_res), 1)
-    #     for i in range(steps + 1):
-    #         t  = i / steps
-    #         x  = x1 + t * (x2 - x1)
-    #         y  = y1 + t * (y2 - y1)
-    #         gx, gy = self.world_to_grid(x, y)
-    #         if gx is None:
-    #             return True
-    #         if self.map_data[gy, gx] == -1:
-    #             return True
-    #     return False
 
+            if self._rrt_consecutive_failures >= 5:
+                self.get_logger().warn(
+                    f"Abandoning goal ({self.goal_x:.2f},{self.goal_y:.2f}) "
+                    f"after 5 consecutive RRT* failures"
+                )
+                self.visited_frontiers.append((self.goal_x, self.goal_y))
+                self.goal_x = None
+                self.waypoints = []
+                self._rrt_consecutive_failures = 0
+   
     def rrt_star(self, start, goal):
         """RRT* algorithm - returns list of (x,y) waypoints"""
         _t_start = time.monotonic()
@@ -1419,6 +1413,19 @@ class AutonomousExplorer(Node):
         gx_cell, gy_cell = self.world_to_grid(self.current_x, self.current_y)
 
         if gx_cell is not None and self.sdf_obs is not None:
+           
+            sdf_unk_for_cbf = None
+            if self.sdf_unk is not None:
+                phi2_raw = float(self.sdf_unk[gy_cell, gx_cell])
+                if phi2_raw > -self.cbf.d_stop:
+                    # Only activate when approaching (not already past) the frontier
+                    sdf_unk_for_cbf = self.sdf_unk
+                else:
+                    self.get_logger().debug(
+                        f"Frontier CBF suppressed: phi2={phi2_raw:.3f}m "
+                        f"(drone inside unknown, d_stop={self.cbf.d_stop:.2f}m)"
+                    )
+
             cbf_result = self.cbf.filter(
                 u_des   = np.array([vx, vy]),
                 sdf_obs = self.sdf_obs,
