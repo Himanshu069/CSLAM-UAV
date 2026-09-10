@@ -1,9 +1,9 @@
-<h1>Autonomous Multi-UAV Exploration System (ROS 2 + PX4(uXRCE-DDS)  + RTAB-Map)</h1>
+<h1>Autonomous UAV Exploration System (ROS 2 + PX4(uXRCE-DDS)  + RTAB-Map)</h1>
 
-This repository implements a full **multi-agent autonomous exploration framework** for UAVs using **ROS 2, PX4, Gazebo, and RTAB-Map**. The system is designed for both **simulation and real-world deployment**, maintaining identical architecture across both environments.
+This repository implements a full **autonomous exploration framework** for UAVs using **ROS 2, PX4, Gazebo, and RTAB-Map**. The system is designed for both **simulation and real-world deployment**, maintaining identical architecture across both environments.
 
 It supports:
-- Multi-UAV visual-inertial SLAM
+- UAV visual-inertial SLAM
 - Centralized map fusion (2D occupancy grids)
 - Autonomous frontier-based exploration
 - RRT* global planning + APF local control
@@ -30,7 +30,6 @@ A centralized ground-station node performs:
 - 3D point cloud fusion (simulation only)
 - Multi-agent map alignment using:
   - Known initial poses (rigid transform)
-  - OR feature-based estimation (AKAZE-based registration)
 
 ---
 
@@ -147,7 +146,7 @@ https://github.com/user-attachments/assets/60eb4398-de8c-4890-864f-8d0ada58b992
 
 ## Key Features
 
--  Multi-UAV RTAB-Map SLAM
+-  UAV RTAB-Map SLAM
 -  Centralized real-time map fusion
 - GPS-denied navigation
 -  Frontier-based autonomous exploration
