@@ -157,37 +157,7 @@ https://github.com/user-attachments/assets/60eb4398-de8c-4890-864f-8d0ada58b992
 
 ---
 
-## Exploration Metrics Logging
 
-Each run logs:
-
-### Coverage Metrics
-- Coverage %
-- Explored area
-- Coverage rate
-
-### Planning Metrics
-- RRT* solve time
-- Iteration count
-- Frontier count
-
-### Safety Metrics
-- Minimum obstacle clearance
-- CBF activation rate
-- QP infeasible events
-- APF force ratio
-
-### Multi-UAV Metrics
-- Inter-drone distance
-- Repulsion forces
-- Safety violations
-
-Outputs:
-- CSV logs (time-series)
-- JSON summary statistics
-- Post-processing plots
-
----
 
 ## Launch Instructions
 
